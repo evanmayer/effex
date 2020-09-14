@@ -76,19 +76,13 @@ def spectrometer_poly(x, n_taps, n_branches):
     n_chan = n_branches
 
     # Pad the signal to an even number of chunks
-    x = cp.zeros(len(x)+len(x)%n_branches) + x
+    x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128) + x
 
     channelized = cusignal.filtering.channelize_poly(x, w, n_chan).T
-    out = cp.zeros((channelized.shape[0], channelized.shape[1] + 1), dtype=cp.complex128)
-    for j in range(channelized.shape[0]):
-        if j == 0:
-            out[j][:-1] = channelized[j]
-        else:
-            out[j][1:] = channelized[j]
-    x_psd = cp.fft.fftshift(cp.fft.fft(out, n_branches, axis=1))
+    x_psd = cp.fft.fftshift(channelized)
 
     # Get rid of that nasty DC spike, thanks
-    x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
+    #x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
 
     return x_psd
 
@@ -132,6 +126,8 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=8192, continuum_mode=True):
             print('pfb_spectrometer call generated an exception: %s' % (exc))
             raise exc
 
+    print(psd_0.shape)
+    print(psd_1.shape)
     # PSDs S(\nu) come out
     # Apply phase gradient,
     # According to http://www.gmrt.ncra.tifr.res.in/gmrt_hpage/Users/doc/WEBLF/LFRA/node70.html,
@@ -237,10 +233,10 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 total_lag = integer_lag + frac_lag
                 print()
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
-                #total_lag -= 1
+                #total_lag -= 0.1
             else:
-                pass
-                total_lag += 4e-4
+                #pass
+                #total_lag += 4e-4
                 print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
@@ -284,13 +280,13 @@ if __name__ == "__main__":
     buf_1 = multiprocessing.Queue(d_len)
 
     # FFT Frequency bin resolution
-    nfft = 1024
+    nfft = 8192
 
     # -------------------------------------------------------------------------
     # RUN 
     # -------------------------------------------------------------------------
-    continuum_mode = True
-    run_time = 30
+    continuum_mode = False
+    run_time = 1
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
     print('Interferometry begins at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(start_time))))
     # IQ source processes
