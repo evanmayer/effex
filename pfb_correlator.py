@@ -1,6 +1,6 @@
 """
-Based on @telegraphic's pfb.py, this FX correlator streams IQ data
-synchronously from 2 SDRs to a deque circular buffer in pairs.
+This FX correlator streams IQ data synchronously from 2 SDRs
+to a deque circular buffer in pairs.
 The GPU is kept fed by popping sample chunks off of 
 the deque, performing polyphase filter-bank preprocessing.
 Then the two streams are combined by cross-correlation.
@@ -20,69 +20,21 @@ import cusignal
 from rtlsdr import RtlSdr
 from rtlobs import utils as ut
 
-# -----------------------------------------------------------------------------
-# Licensed under creative commons share-alike 4.0 from Danny Price
-# -----------------------------------------------------------------------------
-def generate_win_coeffs(n_taps, n_branches, window_fn="hamming"):
-    win_coeffs = cusignal.get_window(window_fn, n_taps*n_branches)
-    sinc       = cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window="rectangular")
-    win_coeffs *= sinc
-    return win_coeffs
-
-
-def pfb_fir_frontend(x, win_coeffs, n_taps, n_branches):
-    W = x.shape[0] // n_taps // n_branches
-    x_p = x.reshape((W*n_taps, n_branches)).T
-    h_p = win_coeffs.reshape((n_taps, n_branches)).T
-    x_summed = cp.zeros((n_branches, n_taps * W - n_taps + 1), dtype=np.complex128)
-    for t in range(0, n_taps*W-n_taps + 1):
-        x_weighted = x_p[:, t:t+n_taps] * h_p
-        x_summed[:, t] = x_weighted.sum(axis=1)
-    return x_summed.T
-
-
-def pfb_filterbank(x, win_coeffs, n_taps, n_branches):
-    x = x[:int(len(x)//(n_taps*n_branches))*n_taps*n_branches] # Ensure it's an integer multiple of win_coeffs
-    x_fir = pfb_fir_frontend(x, win_coeffs, n_taps, n_branches)
-    x_pfb = cp.fft.fftshift(cp.fft.fft(x_fir, n_branches, axis=1))
-    return x_pfb
-
-
-def pfb_spectrometer(x, n_taps, n_chan, n_int, window_fn="hamming"):
-    # Generate window coefficients
-    win_coeffs = generate_win_coeffs(n_taps, n_chan, window_fn)
-    pg = cp.sum(cp.abs(win_coeffs)**2)
-    win_coeffs /= pg**.5 # Normalize for processing gain
-    
-    # Apply frontend, take FFT
-    x_psd = pfb_filterbank(x, win_coeffs, n_taps, n_chan)
-    
-    # Get rid of that nasty DC spike, thanks
-    x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.
-
-    return x_psd
-
-
-# -----------------------------------------------------------------------------
-# End licensed under creative commons share-alike 4.0 from Danny Price
-# -----------------------------------------------------------------------------
-
 def spectrometer_poly(x, n_taps, n_branches): 
     # Create window coefficients
     w = cusignal.get_window("hamming", n_taps * n_branches)\
       * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
+    # github user @telegraphic, Danny Price, normalized to account for processing gain here:
     w /= cp.sum(cp.abs(w)**2.)**.5
-
-    n_chan = n_branches
 
     # Pad the signal to an even number of chunks
     x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128) + x
 
-    channelized = cusignal.filtering.channelize_poly(x, w, n_chan).T
+    channelized = cusignal.filtering.channelize_poly(x, w, n_branches).T
     x_psd = cp.fft.fftshift(channelized)
 
     # Get rid of that nasty DC spike, thanks
-    #x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
+    x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
 
     return x_psd
 
@@ -126,8 +78,6 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=8192, continuum_mode=True):
             print('pfb_spectrometer call generated an exception: %s' % (exc))
             raise exc
 
-    print(psd_0.shape)
-    print(psd_1.shape)
     # PSDs S(\nu) come out
     # Apply phase gradient,
     # According to http://www.gmrt.ncra.tifr.res.in/gmrt_hpage/Users/doc/WEBLF/LFRA/node70.html,
@@ -233,10 +183,10 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 total_lag = integer_lag + frac_lag
                 print()
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
-                #total_lag -= 0.1
+                total_lag -= 0.1
             else:
                 #pass
-                #total_lag += 4e-4
+                total_lag += 2e-4
                 print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
@@ -253,7 +203,7 @@ if __name__ == "__main__":
     ut.biast(1, index=0)
     ut.biast(1, index=1)
     
-    num_samp = 2**18
+    num_samp = 2**17
     rate = 2.4e6
     fnoise = 1420.4e6 # Frequency of noise at which we correct sampling delay
     fc = 1420.4e6 # Frequency of interest
@@ -285,8 +235,8 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # RUN 
     # -------------------------------------------------------------------------
-    continuum_mode = False
-    run_time = 1
+    continuum_mode = True
+    run_time = 100
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
     print('Interferometry begins at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(start_time))))
     # IQ source processes
