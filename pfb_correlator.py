@@ -59,12 +59,38 @@ def pfb_spectrometer(x, n_taps, n_chan, n_int, window_fn="hamming"):
     
     # Get rid of that nasty DC spike, thanks
     x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.
+
     return x_psd
 
 
 # -----------------------------------------------------------------------------
 # End licensed under creative commons share-alike 4.0 from Danny Price
 # -----------------------------------------------------------------------------
+
+def spectrometer_poly(x, n_taps, n_branches): 
+    # Create window coefficients
+    w = cusignal.get_window("hamming", n_taps * n_branches)\
+      * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
+    w /= cp.sum(cp.abs(w)**2.)**.5
+
+    n_chan = n_branches
+
+    # Pad the signal to an even number of chunks
+    x = cp.zeros(len(x)+len(x)%n_branches) + x
+
+    channelized = cusignal.filtering.channelize_poly(x, w, n_chan).T
+    out = cp.zeros((channelized.shape[0], channelized.shape[1] + 1), dtype=cp.complex128)
+    for j in range(channelized.shape[0]):
+        if j == 0:
+            out[j][:-1] = channelized[j]
+        else:
+            out[j][1:] = channelized[j]
+    x_psd = cp.fft.fftshift(cp.fft.fft(out, n_branches, axis=1))
+
+    # Get rid of that nasty DC spike, thanks
+    x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
+
+    return x_psd
 
 
 def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=8192, continuum_mode=True):
@@ -95,8 +121,10 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=8192, continuum_mode=True):
     
     # Threading to take ffts using polyphase filterbank
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-        future_0 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_0), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
-        future_1 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_1), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
+        #future_0 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_0), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
+        #future_1 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_1), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
+        future_0 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_0), n_taps, n_branches))
+        future_1 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_1), n_taps, n_branches))
         try:
             psd_0 = future_0.result()
             psd_1 = future_1.result()
@@ -209,15 +237,16 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 total_lag = integer_lag + frac_lag
                 print()
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
-                total_lag -= 1
+                #total_lag -= 1
             else:
-                #pass
+                pass
                 total_lag += 4e-4
-                print('Estimated lag (samples): {}'.format(float(total_lag)), end='\r')
+                print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
             vis_out.append(visibility)
             first_time = False
+
     return vis_out
 
 
@@ -255,13 +284,13 @@ if __name__ == "__main__":
     buf_1 = multiprocessing.Queue(d_len)
 
     # FFT Frequency bin resolution
-    nfft = 8192
+    nfft = 1024
 
     # -------------------------------------------------------------------------
     # RUN 
     # -------------------------------------------------------------------------
     continuum_mode = True
-    run_time = 120
+    run_time = 30
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
     print('Interferometry begins at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(start_time))))
     # IQ source processes
