@@ -185,11 +185,9 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
                 #total_lag -= 6
             else:
-                #pass
+                pass
                 #total_lag += sweep_step
-                integer_lag, frac_lag = estimate_lag(gpu_iq_0, gpu_iq_1)
-                total_lag = integer_lag + frac_lag
-                print('Estimated lag (samples): {}'.format(float(total_lag)))
+                #print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
             vis_out.append(visibility)
