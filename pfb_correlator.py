@@ -20,12 +20,11 @@ import cusignal
 from rtlsdr import RtlSdr
 from rtlobs import utils as ut
 
+
 def spectrometer_poly(x, n_taps, n_branches): 
     # Create window coefficients
     w = cusignal.get_window("hamming", n_taps * n_branches)\
       * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
-    # github user @telegraphic, Danny Price, normalized to account for processing gain here:
-    w /= cp.sum(cp.abs(w)**2.)**.5
 
     # Pad the signal to an even number of chunks
     x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128) + x
@@ -67,8 +66,6 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=8192, continuum_mode=True):
     
     # Threading to take ffts using polyphase filterbank
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-        #future_0 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_0), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
-        #future_1 = iq_processor.submit(pfb_spectrometer, *(cp.array(gpu_iq_1), n_taps, n_branches, n_int), **{'window_fn':'hamming'})
         future_0 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_0), n_taps, n_branches))
         future_1 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_1), n_taps, n_branches))
         try:
@@ -126,12 +123,11 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag):
     slope, intc, _, _, _ = stats.linregress(cp.asnumpy(freqs), cp.asnumpy(phases))
     # Convert slope in rad/freq bin into delay
     frac_lag = slope * rate
+    print(frac_lag)
     return frac_lag
 
 
 async def streaming(sdr, buf, num_samp, start_time, run_time):
-    # Adapted from example at
-    # https://pyrtlsdr.readthedocs.io/en/latest/rtlsdraio.html
     while time.time() < start_time:
         time.sleep(1e-9)
     try: 
@@ -183,10 +179,10 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 total_lag = integer_lag + frac_lag
                 print()
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
-                total_lag -= 0.1
+                #total_lag -= 6
             else:
                 #pass
-                total_lag += 2e-4
+                #total_lag += sweep_step
                 print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
@@ -205,8 +201,8 @@ if __name__ == "__main__":
     
     num_samp = 2**17
     rate = 2.4e6
-    fnoise = 1420.4e6 # Frequency of noise at which we correct sampling delay
-    fc = 1420.4e6 # Frequency of interest
+    fnoise = 92.1e6 # Frequency of noise at which we correct sampling delay
+    fc = 92.1e6 # Frequency of interest
     gain = 49.6
     
     sdr_0 = RtlSdr(device_index=0, dithering_enabled=False)
@@ -236,7 +232,9 @@ if __name__ == "__main__":
     # RUN 
     # -------------------------------------------------------------------------
     continuum_mode = True
-    run_time = 100
+    run_time = 3
+    n_int = 5 # # of spectra to integrate into one output spectrum
+    sweep_step = 2.5e-3 # of samples to add to signal delay on each xcorr to sweep across delay space
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
     print('Interferometry begins at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(start_time))))
     # IQ source processes
@@ -252,7 +250,7 @@ if __name__ == "__main__":
                               num_samp,
                               nfft,
                               start_time, run_time,
-                              continuum_mode)
+                              continuum_mode=continuum_mode)
 
     print('IQ processing complete, buffers drained.')
     sdr_0.close()
@@ -267,8 +265,6 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     visibilities = cp.array(visibilities)
 
-    num_spectra = np.array(range(visibilities.shape[0]))
-
     fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'
     
     if continuum_mode: # Continuum mode, don't save spectral information
@@ -277,6 +273,16 @@ if __name__ == "__main__":
             np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
     else:
         freqs = fc + np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate))
+        if n_int > 1:
+            # Integrate spectra:
+            # throw away arrays at the end so the matrix is divisible by n_int
+            visibilities = visibilities[:len(visibilities)-len(visibilities)%n_int,:]
+            # Reshape to 3D and reduce
+            #print(visibilities.reshape((-1, visibilities.shape[1], n_int)).shape)
+            visibilities = cp.mean(visibilities.reshape((-1, visibilities.shape[1], n_int)), axis=2)
+        
+        num_spectra = np.array(range(visibilities.shape[0]))
+
         X,Y = np.meshgrid(freqs, num_spectra)
         with open(fname, 'ab') as f:
             np.savetxt(f, [freqs], delimiter=',')
@@ -314,38 +320,33 @@ if __name__ == "__main__":
         fig.colorbar(im01, ax=axes[0][1])
         fig.colorbar(im10, ax=axes[1][0])
         fig.colorbar(im11, ax=axes[1][1])
-
-        #fig2, axes2 = plt.subplots(nrows=1,ncols=2)
-        #im200 = axes2[0].contourf(cp.asnumpy(cp.fft.fftshift(cp.fft.ifft(visibilities).real)), 50)
-        #axes2[0].set_xlabel('Delay (s)')
-        #axes2[0].set_ylabel('Sample #')
-        #axes2[0].set_title('Delay image')
-        #fig2.colorbar(im200, ax=axes2[0])
     else:
-        im00 = axes[0][0].plot(amp)
-        axes[0][0].set_xlabel('Correlation number')
+        samples = np.arange(0, len(amp))
+        samples_to_ns = sweep_step / rate / 1e-9
+        delay_ns = samples * samples_to_ns
+
+        im00 = axes[0][0].plot(delay_ns, amp)
+        axes[0][0].set_xlabel('Delay (ns)')
         axes[0][0].set_ylabel('Amplitude (uncalibrated)')
         axes[0][0].set_title('Complex Cross-Correlation Amplitude')
                                                                            
-        im01 = axes[0][1].plot(real_part, label='real part')
-        im01 = axes[0][1].plot(imag_part, alpha=0.5, label='imag_part')
-        axes[0][1].set_xlabel('Correlation Number')
+        im01 = axes[0][1].plot(delay_ns, real_part, label='real part')
+        im01 = axes[0][1].plot(delay_ns, imag_part, alpha=0.5, label='imag_part')
+        axes[0][1].set_xlabel('Delay (ns)')
         axes[0][1].set_ylabel('Re[xcorr]')
         axes[0][1].set_title('Complex Cross-Correlation Re{}')
         axes[0][1].legend(loc='best')
         
-        im10 = axes[1][0].plot(phase)
-        axes[1][0].set_xlabel('Correlation Number')
+        im10 = axes[1][0].plot(delay_ns, phase)
+        axes[1][0].set_xlabel('Delay (ns)')
         axes[1][0].set_ylabel('Phase')
         axes[1][0].set_title('Complex Cross-Correlation Phase')
 
-        im11 = axes[1][1].plot(imag_part, label='imag_part')
-        axes[1][1].set_xlabel('Correlation Number')
+        im11 = axes[1][1].plot(delay_ns, imag_part, label='imag_part')
+        axes[1][1].set_xlabel('Delay (ns)')
         axes[1][1].set_ylabel('Amplitude')
-        axes[1][1].set_title('Complex Cross-Correlation ifft')
+        axes[1][1].set_title('Complex Cross-Correlation imag')
 
-    #plt.tight_layout()
-    #plt.savefig('foo.png')
     plt.show()
 
 
