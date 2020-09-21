@@ -120,10 +120,14 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag):
     xcorr *= cp.exp(2j * cp.pi * freqs * (integer_lag / rate) )
     # Prepare to fit residual phase gradient:
     phases = cp.angle(cp.fft.fftshift(xcorr))
-    slope, intc, _, _, _ = stats.linregress(cp.asnumpy(freqs), cp.asnumpy(phases))
+    slope, intc, r_val, p_val, grad_stderr = stats.linregress(cp.asnumpy(freqs), cp.asnumpy(phases))
+    if p_val > 0.05:
+        print('WARNING: estimate_fractional_lag(): Poor residual phase gradient '
+             +'fit (p-value {}); estimate of sampling delay '.format(p_val)
+             +'between receivers is poor. Ensure calibration noise source has '
+             +'power in-band and RFI is mitigated.')
     # Convert slope in rad/freq bin into delay
     frac_lag = slope * rate
-    print(frac_lag)
     return frac_lag
 
 
@@ -183,6 +187,8 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
             else:
                 #pass
                 #total_lag += sweep_step
+                integer_lag, frac_lag = estimate_lag(gpu_iq_0, gpu_iq_1)
+                total_lag = integer_lag + frac_lag
                 print('Estimated lag (samples): {}'.format(float(total_lag)))
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft=nfft, continuum_mode=continuum_mode)
@@ -232,7 +238,7 @@ if __name__ == "__main__":
     # RUN 
     # -------------------------------------------------------------------------
     continuum_mode = True
-    run_time = 3
+    run_time = 30
     n_int = 5 # # of spectra to integrate into one output spectrum
     sweep_step = 2.5e-3 # of samples to add to signal delay on each xcorr to sweep across delay space
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
