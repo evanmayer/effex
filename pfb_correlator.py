@@ -125,7 +125,7 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag):
         print('WARNING: estimate_fractional_lag(): Poor residual phase gradient '
              +'fit (p-value {}); estimate of sampling delay '.format(p_val)
              +'between receivers is poor. Ensure calibration noise source has '
-             +'power in-band and RFI is mitigated.')
+             +'power in-band and radio-frequency interference is mitigated.')
     # Convert slope in rad/freq bin into delay
     frac_lag = slope * rate
     return frac_lag
