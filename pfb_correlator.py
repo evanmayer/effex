@@ -14,6 +14,7 @@ import asyncio
 import multiprocessing
 import concurrent.futures
 from scipy import stats
+from scipy import optimize
 
 import cupy as cp
 import cusignal
@@ -108,26 +109,55 @@ def estimate_integer_lag(iq_0, iq_1):
     # A large portion of this algorithm is from 
     # https://www.dsprelated.com/showcode/207.php
     xcorr = cp.fft.fft(cp.array(iq_0)) * cp.conj(cp.fft.fft(cp.array(iq_1)))
+    fig = plt.figure(99)
+    ax = plt.axes()
+    ax.plot(cp.asnumpy(cp.abs(cp.fft.fftshift(xcorr))))
+    fig.show()
     
     integer_lag = int(cp.argmax(cp.abs(cp.fft.ifft(xcorr))))
     return integer_lag
 
 
 def estimate_fractional_lag(iq_0, iq_1, integer_lag):
-    xcorr = cp.fft.fft(cp.array(iq_0)) * cp.conj(cp.fft.fft(cp.array(iq_1)))
-    freqs = cp.fft.fftfreq(len(xcorr), d=1/rate) + fc
+    xcorr = cp.fft.fftshift(cp.fft.fft(cp.array(iq_0)) * cp.conj(cp.fft.fft(cp.array(iq_1))))
+    freqs = cp.fft.fftshift(cp.fft.fftfreq(len(xcorr), d=1/rate)) + fc
     # Integer sample correction as a phase rotation in frequency space
     xcorr *= cp.exp(2j * cp.pi * freqs * (integer_lag / rate) )
     # Prepare to fit residual phase gradient:
-    phases = cp.angle(cp.fft.fftshift(xcorr))
-    slope, intc, r_val, p_val, grad_stderr = stats.linregress(cp.asnumpy(freqs), cp.asnumpy(phases))
-    if p_val > 0.01:
-        print('WARNING: estimate_fractional_lag(): Poor residual phase gradient '
-             +'fit (p-value {}); estimate of sampling delay '.format(p_val)
-             +'between receivers is poor. Ensure calibration noise source has '
-             +'power in-band and radio-frequency interference is mitigated.')
-    # Convert slope in rad/freq bin into delay
+    phases = cp.angle(xcorr)
+    # Due to RTLSDR bandpass shape, edge frequencies have less power => less certain phase
+    # Assign weights accordingly
+    weights = cp.abs(xcorr)
+    weights /= cp.max(weights)
+    # Fit phase slope across band
+    # https://scipython.com/book/chapter-8-scipy/examples/weighted-and-non-weighted-least-squares-fitting/ 
+    def model(x, m, b):
+        return m * x + b
+    # initial guesses
+    p0 = [0, 0]
+    # fitting
+    popt, pcov = optimize.curve_fit(model,
+        cp.asnumpy(freqs),
+        cp.asnumpy(phases), 
+        p0,
+        sigma=1./cp.asnumpy(weights),
+        absolute_sigma=False) # not real sigmas, just weights
+    slope, intc = popt
+    
     frac_lag = slope * rate
+
+    if np.abs(frac_lag) > 1:
+        fig = plt.figure(100)
+        ax = plt.axes()
+        ax.scatter(cp.asnumpy(freqs), cp.asnumpy(phases), alpha=0.1, label='Calibration data: phase')
+        ax.plot(cp.asnumpy(freqs), cp.asnumpy(freqs)*slope + intc, color='red', label='Fit: phase slope')
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_ylabel('Phase (rad)')
+        ax.legend(loc='best', framealpha=0.4)
+        fig.show()
+        print('WARNING: Delay calibration failed: '
+            + 'calculated fractional sample delay |{}| > 1 '.format(frac_lag)
+            + 'indicates poor fit.')
     return frac_lag
 
 
@@ -212,8 +242,8 @@ if __name__ == "__main__":
     ut.biast(1, index=0)
     ut.biast(1, index=1)
     
-    num_samp = 2**17
-    rate = 2.4e6
+    num_samp = 2**18
+    rate = 2.2e6
     fnoise = 1420.4e6 # Frequency of noise at which we correct sampling delay
     fc = fnoise#1420.4e6 # Frequency of interest
     gain = 49.6
@@ -239,13 +269,13 @@ if __name__ == "__main__":
     buf_1 = multiprocessing.Queue(d_len)
 
     # FFT Frequency bin resolution
-    nfft = 8192//4
+    nfft = 2**12
 
     # -------------------------------------------------------------------------
     # RUN 
     # -------------------------------------------------------------------------
     continuum_mode = False
-    run_time = 300
+    run_time = 1
     n_int = 1 # of spectra to integrate into one output spectrum
     sweep_step = 0.0 # 2e-4 # of samples to add to signal delay on each xcorr to sweep across delay space
     start_time = time.time() + 1 # Give streaming processes a second to get to to the starting line
@@ -315,22 +345,23 @@ if __name__ == "__main__":
     fig.tight_layout()
 
     if len(visibilities.shape) > 1:
-        im00 = axes[0][0].pcolormesh(X, Y, amp, cmap='viridis')
+        im00 = axes[0][0].pcolormesh(X, Y, amp, shading='auto', cmap='viridis')
         axes[0][0].set_xlabel('Frequency (Hz)')
         axes[0][0].set_ylabel('Sample #')
         axes[0][0].set_title('Complex Cross-Correlation Amplitude')
     
-        im01 = axes[0][1].pcolormesh(X, Y, real_part, cmap='viridis')
+        im01 = axes[0][1].pcolormesh(X, Y, real_part, shading='auto', cmap='viridis')
         axes[0][1].set_xlabel('Frequency (Hz)')
         axes[0][1].set_ylabel('Sample #')
         axes[0][1].set_title('Real part of XCorrs')
         
-        im10 = axes[1][0].pcolormesh(X, Y, phase, cmap='viridis')
+        im10 = axes[1][0].pcolormesh(X, Y, phase, shading='auto', cmap='viridis')
+        im10.set_clim(-np.pi, np.pi)
         axes[1][0].set_xlabel('Frequency (Hz)')
         axes[1][0].set_ylabel('Sample #')
         axes[1][0].set_title('Complex Cross-Correlation Phase')
     
-        im11 = axes[1][1].pcolormesh(X, Y, imag_part, cmap='viridis')
+        im11 = axes[1][1].pcolormesh(X, Y, imag_part, shading='auto', cmap='viridis')
         axes[1][1].set_xlabel('Frequency (Hz)')
         axes[1][1].set_ylabel('Sample #')
         axes[1][1].set_title('Imag part of XCorrs')
