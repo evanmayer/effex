@@ -189,6 +189,7 @@ async def streaming(sdr, fc, buf, num_samp, start_time, run_time):
 
 
 def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mode):
+    # Store off cross-correlated chunks of IQ samples
     vis_out = []
     # Create mapped, pinned memory for zero copy between CPU and GPU
     gpu_iq_0 = cusignal.get_shared_mem(num_samp, dtype=np.complex128)
@@ -213,10 +214,11 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
             else:
                 break
         else:
-            #print(buf_0.qsize(), buf_1.qsize(), len(data_0), len(data_1))
-            # Complex timestream chunks x(t) go over to GPU
+            # Complex chunks of IQ data vs. time go over to GPU
             gpu_iq_0[:] = data_0
             gpu_iq_1[:] = data_1
+            # Self-calibration assumes a noise source w/flat PSD in-band is 
+            # used as input on first cycle.
             # Estimate integer and fractional sample delays
             if first_time:
                 integer_lag, frac_lag = estimate_lag(gpu_iq_0, gpu_iq_1)
@@ -224,6 +226,8 @@ def process_iq(buf_0, buf_1, num_samp, nfft, start_time, run_time, continuum_mod
                 print()
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
                 total_lag -= 1
+            # Provide a rudimentary method of sweeping phase in time: increase
+            # lag in samples
             elif sweep_step:
                 total_lag += sweep_step
                 print('Estimated lag (samples): {}'.format(float(total_lag)))
