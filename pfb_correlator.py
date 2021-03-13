@@ -312,7 +312,7 @@ def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mod
                 integer_lag, frac_lag = estimate_lag(gpu_iq_0, gpu_iq_1, rate, fc)
                 total_lag = integer_lag + frac_lag
                 print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
-                total_lag -= 1 # Start sweep a full sample offset from "phased-up"
+                #total_lag -= 1 # Start sweep a full sample offset from "phased-up"
             # Provide a rudimentary method of sweeping phase in time: increase
             # lag in samples. This is more of a dev/testing feature.
             elif sweep_step:
