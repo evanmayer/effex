@@ -17,6 +17,8 @@ which generates output data that is automatically plotted as
 
 <img src="https://github.com/evanmayer/pfb_correlator/blob/master/images/Figure_101.png" width="500">
 
+The time series of complex cross-correlations is written to a file in .csv format.
+
 Installation
 ------------
 
