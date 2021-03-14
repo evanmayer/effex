@@ -36,7 +36,7 @@ Software Required
 
 Hardware Required
 -----------------
-- Computer with NVIDIA CUDA-capable GPU (at least 4 logical processors recommended)
+- Computer with NVIDIA CUDA-capable GPU (at least 4 CPU logical processors recommended)
 - 2x USB RTL-SDR dongles
     - CLK sharing modification a la: [Juha Vierinen](https://ptrkrysik.github.io/), [Piotr Krysik](https://ptrkrysik.github.io/), or [RTL-SDR Blog v3 Selectable Clock & Expansion Headers](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/)
 - 2x SMA antennas
