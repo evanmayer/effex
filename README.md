@@ -58,6 +58,8 @@ Provided the data rate from the USB SDRs is not too high, this correlator runs i
 Contribute
 ----------
 
+This is software I designed and tested myself, running on hardware that is far from "lab grade." Most of it passes a "sniff" test for reasonableness, but it is at best a proof of concept. It ignores many sources of error and probably reflects my imperfect knowledge of the hardware and algorithms required to make this truly "work." If you can point out any errors in hardware or software, I'd be grateful. Have at it:
+
 - Issue Tracker: https://github.com/evanmayer/pfb_correlator/issues
 - Source Code: https://github.com/evanmayer/pfb_correlator
 
@@ -70,7 +72,7 @@ See the Issues tab of this project.
 License
 -------
 
-The project is licensed under the GNU General Public License v2.0 license. Make sure you read and understand the terms.
+The project is [licensed](https://github.com/evanmayer/pfb_correlator/blob/master/LICENSE) under the GNU General Public License v2.0 license. Make sure you read and understand the terms.
 
 Conflict of Interest Statement
 ------------------------------
