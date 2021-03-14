@@ -5,11 +5,6 @@ pfb_correlator computes the [cross-correlation](https://en.wikipedia.org/wiki/Cr
 It's written in Python and it has a command line interface:
 
 ```bash
-python pfb_correlator.py
-```
-
-or
-```bash
 python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 91.3e6 --num_samp 262144 --resolution 4096 --gain 49.6 --mode spectrum
 ```
 
