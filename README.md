@@ -13,7 +13,9 @@ or
 python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 91.3e6 --num_samp 262144 --resolution 4096 --gain 49.6 --mode spectrum
 ```
 
-![Example complex correlator output](https://github.com/evanmayer/pdb_correlator/blob/master/images/Figure101.png)
+which generates output data that is automatically plotted as
+
+<img src="https://github.com/evanmayer/pfb_correlator/blob/master/images/Figure_101.png" width="500">
 
 Installation
 ------------
