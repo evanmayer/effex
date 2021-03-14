@@ -43,6 +43,10 @@ Hardware Required
 - Any amplifiers/filtering needed to achieve good signal-to-noise ratio of your signal of interest. For Hydrogen line radio astronomy, I use the [Nooelec SAWbird H1+ barebones](https://www.nooelec.com/store/sawbird-h1-barebones.html)
 - A white noise source in your band of interest is useful for calibrating out the delay between channels caused by cable lengths and USB sampling startup delay. I use a room temperature 50 Ohm SMA calibration load amplified and filtered for my band of interest, a poor copy of this [CASPER noise source](https://casper.ssl.berkeley.edu/wiki/Noise_sources).
 
+Here's an image of my hardware stack set up for calibration on my kitchen table.
+
+<img src="https://github.com/evanmayer/pfb_correlator/blob/master/images/hwstack.jpg" width="500">
+
 Software Implementation
 -----------------------
 It is an **FX** architecture complex correlator implemented in software. 
