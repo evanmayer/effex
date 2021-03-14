@@ -57,7 +57,7 @@ Provided the data rate from the USB SDRs is not too high, this correlator runs i
 Contribute
 ----------
 
-- Issue Tracker: github.com/evanmayer/pfb_correlator/issues
+- Issue Tracker: https://github.com/evanmayer/pfb_correlator/issues
 - Source Code: https://github.com/evanmayer/pfb_correlator
 
 Support
