@@ -6,15 +6,15 @@ the deque, performing polyphase filter-bank preprocessing.
 Then the two streams are combined by cross-correlation.
 """
 import argparse
+import asyncio
+import concurrent.futures
 import matplotlib.pyplot as plt
+import multiprocessing
 import numpy as np
+from scipy import optimize
+from scipy import stats
 import sys
 import time
-import asyncio
-import multiprocessing
-import concurrent.futures
-from scipy import stats
-from scipy import optimize
 
 import cupy as cp
 import cusignal
