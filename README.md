@@ -76,6 +76,6 @@ The project is [licensed](https://github.com/evanmayer/pfb_correlator/blob/maste
 
 Conflict of Interest Statement
 ------------------------------
-I do not have explicit financial interest in the products or services of NVIDIA, RTL-SDR Blog, Nooelec, or any other equipment manufacturer. This code was developed by me without financial assistance or sponsorship from anyone.
+I do not have explicit financial interest in the products or services of NVIDIA, RTL-SDR.com, Nooelec, or any other equipment manufacturer. This code was developed by me without financial assistance or sponsorship from anyone.
 
 README.md Template from [writethedocs](https://www.writethedocs.org/guide/writing/beginners-guide-to-docs/)
