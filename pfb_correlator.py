@@ -96,9 +96,11 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft, rate, fc, mode):
             print('pfb_spectrometer call generated an exception: %s' % (exc))
             raise exc
 
-    # PSDs S(\nu) come out
-    # Apply phase gradient,
-    # According to http://www.gmrt.ncra.tifr.res.in/gmrt_hpage/Users/doc/WEBLF/LFRA/node70.html,
+    # Apply phase gradient,inspired by 
+    # http://www.gmrt.ncra.tifr.res.in/gmrt_hpage/Users/doc/WEBLF/LFRA/node70.html,
+    # implemented according to Thompson, Moran, Swenson's Interferometry and 
+    # Synthesis in Radio Astronoy, 3rd ed., p.364: Fractional Sample Delay 
+    # Correction
     freqs = cp.fft.fftshift(cp.fft.fftfreq(psd_1.shape[-1], d=1/rate)) + fc
 
     xcorr_array = psd_0 * (cp.conj(psd_1) * cp.exp(2j * (cp.pi) * freqs * (total_lag / rate) )) 
@@ -148,7 +150,6 @@ def estimate_integer_lag(iq_0, iq_1):
     samples
     :rtype: int
     '''
-    # Perform fractional sampling time correction on complex samples
     # Find the integer number of samples of the delay 
     # This is a common way to find lag in samples between timeseries, see
     # https://www.dsprelated.com/showcode/207.php
@@ -184,7 +185,7 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag, rate, fc):
     xcorr *= cp.exp(2j * cp.pi * freqs * (integer_lag / rate) )
     # Prepare to fit residual phase gradient:
     phases = cp.angle(xcorr)
-    # Due to RTLSDR bandpass shape, edge frequencies have less power => less certain phase
+    # Due to receiver bandpass shape, edge frequencies have less power => less certain phase
     # Assign weights accordingly
     weights = cp.abs(xcorr)
     weights /= cp.max(weights)
@@ -348,8 +349,8 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
         :param mode: str, either 'continuum' for recording visibility amplitudes
         with time, or 'spectrum' for recording spectrum visibilities with time.
         Defaults to 'continuum'.
-	:return: str, fname, filename that was written to
-	:rtype: str
+        :return: str, fname, filename that was written to
+        :rtype: str
         '''
         fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
         
@@ -542,8 +543,8 @@ if __name__ == "__main__":
     raw_output = process_iq(buf_0, buf_1,
                             args.num_samp,
                             args.nfft,
-			    args.rate,
-			    args.fc,
+                            args.rate,
+                            args.fc,
                             start_time, args.run_time,
                             mode=args.mode)
 
