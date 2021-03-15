@@ -38,7 +38,7 @@ Hardware Required
 -----------------
 - Computer with NVIDIA CUDA-capable GPU (at least 4 CPU logical processors recommended)
 - 2x USB RTL-SDR dongles
-    - CLK sharing modification a la: [Juha Vierinen](https://ptrkrysik.github.io/), [Piotr Krysik](https://ptrkrysik.github.io/), or [RTL-SDR Blog v3 Selectable Clock & Expansion Headers](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/)
+    - CLK sharing modification a la: [Juha Vierinen](https://hackaday.com/2015/06/05/building-your-own-sdr-based-passive-radar-on-a-shoestring/), [Piotr Krysik](https://ptrkrysik.github.io/), or [RTL-SDR Blog v3 Selectable Clock & Expansion Headers](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/)
 - 2x SMA antennas
 - Any amplifiers/filtering needed to achieve good signal-to-noise ratio of your signal of interest. For Hydrogen line radio astronomy, I use the [Nooelec SAWbird H1+ barebones](https://www.nooelec.com/store/sawbird-h1-barebones.html)
 - A white noise source in your band of interest is useful for calibrating out the delay between channels caused by cable lengths and USB sampling startup delay. I use a room temperature 50 Ohm SMA calibration load amplified and filtered for my band of interest, a poor copy of this [CASPER noise source](https://casper.ssl.berkeley.edu/wiki/Noise_sources).
