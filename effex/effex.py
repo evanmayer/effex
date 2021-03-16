@@ -33,7 +33,7 @@ def spectrometer_poly(x, n_taps, n_branches):
       * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
 
     # Pad the signal to an even number of chunks
-    x = cp.empty(len(x)+len(x)%n_branches, dtype=np.complex128) + x
+    x = cp.empty(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
 
     channelized = cusignal.filtering.channelize_poly(x, w, n_branches).T
     x_psd = cp.fft.fftshift(channelized)
