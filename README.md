@@ -1,8 +1,8 @@
-# pfb_correlator
+# effex
 
-pfb_correlator computes the [cross-correlation](https://en.wikipedia.org/wiki/Cross-correlation) of signals from two USB software-defined radios ([RTL-SDR](https://www.rtl-sdr.com/about-rtl-sdr/)s) with synchronized clocks. This has applications in radio astronomy and remote sensing.
+effex computes the [cross-correlation](https://en.wikipedia.org/wiki/Cross-correlation) of signals from two USB software-defined radios ([RTL-SDR](https://www.rtl-sdr.com/about-rtl-sdr/)s) with synchronized clocks. This has applications in radio astronomy and remote sensing.
 
-It's written in Python and it has a command line interface:
+It's written in Python and it has a command line application:
 
 ```bash
 python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 91.3e6 --num_samp 262144 --resolution 4096 --gain 49.6 --mode spectrum
@@ -10,7 +10,7 @@ python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 91.3e6 --num_sa
 
 which generates output data that is automatically plotted as
 
-<img src="https://github.com/evanmayer/pfb_correlator/blob/master/images/Figure_101.png" width="500">
+<img src="https://github.com/evanmayer/effex/blob/master/images/Figure_101.png" width="500">
 
 The time series of complex cross-correlations is written to a file in .csv format.
 
@@ -19,7 +19,7 @@ Installation
 
 Install it by running:
 
-    git clone https://github.com/evanmayer/pfb_correlator.git
+    git clone https://github.com/evanmayer/effex.git
     
 Software Required
 -----------------
@@ -45,7 +45,7 @@ Hardware Required
 
 Here's an image of my hardware stack set up for calibration on my kitchen table.
 
-<img src="https://github.com/evanmayer/pfb_correlator/blob/master/images/hwstack.jpg" width="500">
+<img src="https://github.com/evanmayer/effex/blob/master/images/hwstack.jpg" width="500">
 
 Software Implementation
 -----------------------
@@ -60,8 +60,8 @@ Contribute
 
 This is software I designed and tested myself, running on hardware that is far from "lab grade." Most of it passes a "sniff" test for reasonableness, but it is at best a proof of concept. It ignores many sources of error and probably reflects my imperfect knowledge of the hardware and algorithms required to make this truly "work." If you can point out any errors in hardware or software, I'd be grateful. Have at it:
 
-- Issue Tracker: https://github.com/evanmayer/pfb_correlator/issues
-- Source Code: https://github.com/evanmayer/pfb_correlator
+- Issue Tracker: https://github.com/evanmayer/effex/issues
+- Source Code: https://github.com/evanmayer/effex
 
 Support
 -------
@@ -72,7 +72,7 @@ See the Issues tab of this project.
 License
 -------
 
-The project is [licensed](https://github.com/evanmayer/pfb_correlator/blob/master/LICENSE) under the GNU General Public License v2.0 license. Make sure you read and understand the terms.
+The project is [licensed](https://github.com/evanmayer/effex/blob/master/LICENSE) under the GNU General Public License v2.0 license. Make sure you read and understand the terms.
 
 Conflict of Interest Statement
 ------------------------------
