@@ -12,7 +12,7 @@ which generates output data that is automatically plotted as
 
 <img src="https://github.com/evanmayer/effex/blob/master/images/Figure_101.png" width="500">
 
-The time series of complex cross-correlations is written to a file in .csv format.
+The time series of complex cross-correlation spectra is written to a file in .csv format.
 
 Installation
 ------------
@@ -51,7 +51,7 @@ Software Implementation
 -----------------------
 It is an **FX** architecture complex correlator implemented in software. 
 - **F**: a spectrometer is implemented for each channel by a [polyphase filterbank](https://arxiv.org/abs/1607.03579) followed by a [Fast Fourier transform](https://en.wikipedia.org/wiki/Fast_Fourier_transform). 
-- **X**: The cross-correlation is computed by vector multiplication of one channel's spectrum by the [complex conjugate](https://en.wikipedia.org/wiki/Complex_conjugate) of the other. Many computationally expensive operations are accelerated by performing them on a GPU using [NVIDIA RAPIDSAI cuSignal](https://medium.com/rapids-ai/gpu-accelerated-signal-processing-with-cusignal-689062a6af8).
+- **X**: The cross-power spectrum is computed by vector multiplication of one channel's spectrum by the [complex conjugate](https://en.wikipedia.org/wiki/Complex_conjugate) of the other. Many computationally expensive operations are accelerated by performing them on a GPU using [NVIDIA RAPIDSAI cuSignal](https://medium.com/rapids-ai/gpu-accelerated-signal-processing-with-cusignal-689062a6af8).
 
 Provided the data rate from the USB SDRs is not too high, this correlator runs in real time. This is accomplished by multicore and multithreaded execution to process data from both channels concurrently.
 
