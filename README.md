@@ -2,7 +2,7 @@
 
 effex computes the [cross-correlation](https://en.wikipedia.org/wiki/Cross-correlation) of signals from two USB software-defined radios ([RTL-SDR](https://www.rtl-sdr.com/about-rtl-sdr/)s) with synchronized clocks. This has applications in radio astronomy and remote sensing.
 
-The library is written in Python and it driven by a command line application:
+The library is written in Python and is driven by a command line application:
 
 ```bash
 python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 91.3e6 --num_samp 262144 --resolution 4096 --gain 49.6 --mode spectrum
