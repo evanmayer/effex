@@ -57,6 +57,14 @@ It is an **FX** architecture complex correlator implemented in software.
 
 Provided the data rate from the USB SDRs is not too high, this correlator runs in real time. This is accomplished by multicore and multithreaded execution to process data from both channels concurrently.
 
+Testing
+-------
+Testing is handled with pytest:
+```
+cd effex/
+pytest
+```
+
 Contribute
 ----------
 
