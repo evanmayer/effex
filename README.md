@@ -34,6 +34,8 @@ Software Required
 
 \* These libraries add functions to disable RTL-SDR phase-locked-loop (PLL) dithering, which is necessary for coherent operation of two receivers that share a clock signal, at the cost of tuning frequency accuracy.
 
+If you have trouble with the install of dependencies, see the [detailed install instructions](https://github.com/evanmayer/install_instructions.md) I wrote for my Jetson Nano.
+
 Hardware Required
 -----------------
 - Computer with NVIDIA CUDA-capable GPU (at least 4 CPU logical processors recommended)
