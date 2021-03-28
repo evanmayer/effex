@@ -381,6 +381,8 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
         fig.tight_layout()
                                                                                           
         if 'continuum' == mode:
+            #ECM: TODO: delay-space sweep not implemented in production for now
+            sweep_step = False
             # Convert x axis from SDR samples to time delay
             samples = np.arange(0, len(amp))                                    
             if sweep_step:
