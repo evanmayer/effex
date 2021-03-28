@@ -311,7 +311,7 @@ def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mod
             # Estimate integer and fractional sample delays
             if first_time:
                 total_delay = estimate_delay(gpu_iq_0, gpu_iq_1, rate, fc)
-                print('Estimated delay (ms): {}'.format(1e6 * total_delay))
+                print('Estimated delay (us): {}'.format(1e6 * total_delay))
                 first_time = False
 
             visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_delay, nfft, rate, fc, mode)
