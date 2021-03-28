@@ -1,40 +1,124 @@
 from context import effex as fx
 
 import cupy as cp
+import cusignal
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 
-def gen_complex_sinusoid(time, rate, freq, noisy=False):
-    num_elem = int(rate * time)
+cp.random.seed(77777)
 
-    t = cp.linspace(0, time, num=num_elem)
+def gen_complex_sinusoid(num_samp, rate, freq, noisy=False):
+    time = num_samp / rate
+    t = cp.linspace(0, time, num=num_samp)
     omega = 2. * cp.pi * freq
     phi = 0.0
     iq = cp.cos(omega * t + phi) + 1j * cp.sin(omega * t + phi)
 
     if noisy:
-        iq += cp.random.normal(size=num_elem) + 1j * cp.random.normal(size=num_elem)
+        iq += gen_complex_noise(num_samp, rate, scale=.1)
 
     return iq
 
 
-@pytest.mark.parametrize('time', [1e-5, .1])
-@pytest.mark.parametrize('rate', [1.28e6, 2.4e6])
-@pytest.mark.parametrize('freq', [300e6, 1.4204e9])
-@pytest.mark.parametrize('taps', [1,2,3,4,5,6,7,8,9,10])
-@pytest.mark.parametrize('branches', [128, 1024, 4096])
-def test_spectrometer_poly(time, rate, freq, taps, branches):
-    iq = gen_complex_sinusoid(time, rate, freq, noisy=True)
+def gen_complex_noise(num_samp, rate, scale=.1):
+    time = num_samp / rate
+    t = cp.linspace(0, time, num=num_samp)
+    iq = cp.random.normal(size=num_samp, scale=scale) + 1j * cp.random.normal(size=num_samp, scale=scale)
+
+    return iq
+
+
+@pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
+@pytest.mark.parametrize('rate', [1e6, 2.4e6])
+@pytest.mark.parametrize('freq', [2e4, 1e5])
+@pytest.mark.parametrize('taps', [4, 32])
+@pytest.mark.parametrize('branches', [2048, 4096])
+def test_spectrometer_poly(num_samp, rate, freq, taps, branches, plot=False):
+    # This is to test that the PFB frontend and subsequent methods of
+    # generating a power spectrum are valid, by identifying a frequency
+    # component of known value.
+    iq = gen_complex_sinusoid(num_samp, rate, freq, noisy=False)
 
     spec = fx.spectrometer_poly(iq, taps, branches)
 
-    psd = spec * cp.conj(spec)
-    mean_psd = psd.mean(axis=0)**2.
-    freqs = cp.fft.fftshift(cp.fft.fftfreq(mean_psd.shape[-1], d=1/rate)) + freq
+    psd = cp.real(spec * cp.conj(spec)).mean(axis=0)
 
-    freq_err_pct = 100. * abs(freqs[cp.argmax(mean_psd)] - freq) / freq
+    freqs = cp.fft.fftshift(cp.fft.fftfreq(len(psd), d=1/rate))
+    psd = cp.fft.fftshift(psd)
+
+    freq_err_pct = 100. * abs(freqs[cp.argmax(psd)] - freq) / freq
     assert(freq_err_pct < 1.)
 
+    if plot:
+        ax = plt.axes()
+        ax.plot(cp.asnumpy(freqs), cp.asnumpy(psd))
+        plt.show()
+
     return
+
+
+@pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
+@pytest.mark.parametrize('rate', [2.4e6])
+@pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
+def test_estimate_integer_delay(num_samp, rate, samp_offset_int):
+    # This is to test that integer-sample delay estimation is functioning by
+    # artificially applying a known delay and estimating it like we would with
+    # no a priori knowledge
+    iq_0 = gen_complex_noise(num_samp, rate)
+    iq_1 = cp.roll(iq_0, samp_offset_int)
+
+    est_delay = fx.estimate_integer_delay(iq_0, iq_1, rate)
+    est_delay_samples = est_delay * rate
+
+    assert(abs(samp_offset_int - est_delay_samples) < 1e-9)
+
+    return
+
+
+def example_fstc(num_samp, rate, samp_offset_int):
+    # This is to test the method of applying a phase shift to a signal by
+    # multiplying its Fourier transform by a ifrequency-dependent complex
+    # exponential.
+    fc = 1e5
+    iq_0 = gen_complex_sinusoid(num_samp, rate, fc, noisy=True)
+
+    # First, pad by length of signals
+    n = len(iq_0)                                         
+    iq_0_padded = cp.zeros(2 * n, dtype=cp.complex128)
+    iq_1_padded = cp.zeros(2 * n, dtype=cp.complex128)
+    iq_0_padded[0:n] += cp.array(iq_0)
+    iq_1_padded[0:n] += cp.array(iq_0)
+    iq_1_shifted = cp.roll(iq_0_padded, samp_offset_int)
+
+    est_lag = fx.estimate_integer_lag(iq_0_padded, iq_1_shifted)
+
+    f0 = cp.fft.fft(iq_0_padded)
+    f1 = cp.fft.fft(iq_1_shifted)
+    freqs = cp.fft.fftfreq(len(f1), d=1/rate) + fc
+
+    rot = cp.exp(-1j * cp.pi * freqs * (-est_lag) / rate)
+
+    f1_shift = f1 * rot
+
+    iq_1_unshifted = cp.fft.ifft(f1_shift)
+
+    # At this point, we should have un-done the sample shift caused by the
+    # roll() func
+    ax = plt.axes()
+    ax.plot(cp.asnumpy(cp.real(iq_0_padded)), label='Re[orig]')
+    ax.plot(cp.asnumpy(cp.imag(iq_0_padded)), label='Im[orig]')
+    ax.plot(cp.asnumpy(cp.real(iq_1_unshifted)), alpha=0.5, label='Re[realigned]')
+    ax.plot(cp.asnumpy(cp.imag(iq_1_unshifted)), alpha=0.5, label='Im[realigned]')
+    ax.set_xlabel('# samples')
+    ax.set_ylabel('Amplitude')
+    ax.set_title('Time-realigned with Freq Domain Rotation')
+    ax.legend(loc='best')
+    plt.show()
+
+    return
+
+if __name__ == "__main__":
+    example_fstc(2**14, 2.4e6, -100)
 

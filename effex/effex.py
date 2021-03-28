@@ -19,13 +19,13 @@ import cusignal
 
 
 def spectrometer_poly(x, n_taps, n_branches): 
-    '''Take the fft of input data using cuSignal polyphase channelizer. Returns
-    the power spectral density of x.
+    '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
+    input array x, channelized into n_branches coefficients
 
     :param x: cupy.array, signal of interest
     :param n_taps: int, number of polyphase channelizer taps
     :param n_branches: int, number of polyphase channelizer branches
-    :return: cupy.array, psd(x)
+    :return: cupy.array, channelized
     :rtype: cupy.array
     '''
     # Create window coefficients
@@ -33,25 +33,21 @@ def spectrometer_poly(x, n_taps, n_branches):
       * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
 
     # Pad the signal to an even number of chunks
-    x = cp.empty(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
+    x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
 
     channelized = cusignal.filtering.channelize_poly(x, w, n_branches).T
-    x_psd = cp.fft.fftshift(channelized)
 
-    # Get rid of that nasty DC spike, thanks
-    x_psd[:, x_psd.shape[-1]//2] = (x_psd[:, -1 + x_psd.shape[-1]//2] + x_psd[:, 1 + x_psd.shape[-1]//2]) / 2.   
-
-    return x_psd
+    return channelized
 
 
-def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft, rate, fc, mode):
+def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_delay, nfft, rate, fc, mode):
     '''Consume buffer data to compute PSDs in pairs and then cross-
     correlate them. Use mapped, pinned memory space allocated on the GPU.
     :param gpu_iq_0: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 0
     :param gpu_iq_1: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 1
-    :param total_lag: float, number of samples lag between channels 0 and 1.
+    :param total_delay: float, time delay in sec between channels 0 and 1.
     Calculated by sum of estimate_lag retvals.
     :param nfft: int, number of fft bins to use in psd.
     :param rate: float, SDR sample rate.
@@ -75,107 +71,118 @@ def pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft, rate, fc, mode):
              +'n_branches: {}\n'.format(n_branches)
              +'n_taps: {}\n'.format(n_taps)
              +'n_branches*n_taps: {}'.format(n_branches*n_taps))
-    if (0 != (len(gpu_iq_0) % (n_taps * n_branches))):
-        raise ValueError('Assertion failed: n_taps * n_branches must '
-             +'divide length of input timestream evenly.\n'
-             +'timestream len: {}\n'.format(len(gpu_iq_0))
-             +'n_branches: {}\n'.format(n_branches)
-             +'n_taps: {}\n'.format(n_taps))
     
     # Threading to take ffts using polyphase filterbank
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
         future_0 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_0), n_taps, n_branches))
         future_1 = iq_processor.submit(spectrometer_poly, *(cp.array(gpu_iq_1), n_taps, n_branches))
         try:
-            psd_0 = future_0.result()
-            psd_1 = future_1.result()
+            f0 = future_0.result()
+            f1 = future_1.result()
         except Exception as exc:
             print('pfb_spectrometer call generated an exception: %s' % (exc))
             raise exc
 
-    # Apply phase gradient,inspired by 
-    # http://www.gmrt.ncra.tifr.res.in/gmrt_hpage/Users/doc/WEBLF/LFRA/node70.html,
+    # Apply phase gradient, inspired by 
+    # http://www.gmrt.ncra.tifr.res.in/doc/WEBLF/LFRA/node70.html
     # implemented according to Thompson, Moran, Swenson's Interferometry and 
     # Synthesis in Radio Astronoy, 3rd ed., p.364: Fractional Sample Delay 
     # Correction
-    freqs = cp.fft.fftshift(cp.fft.fftfreq(psd_1.shape[-1], d=1/rate)) + fc
+    f0 = cp.fft.fftshift(f0)
+    f1 = cp.fft.fftshift(f1)
+    freqs = cp.fft.fftshift(cp.fft.fftfreq(f0.shape[-1], d=1/rate))
 
-    xcorr_array = psd_0 * (cp.conj(psd_1) * cp.exp(2j * (cp.pi) * freqs * (total_lag / rate) )) 
+    # Calculate cross-power spectrum and apply FSTC by a phase gradient
+    rot = cp.exp(-2j * cp.pi * freqs * (-total_delay))
+    xpower_spec = f0 * cp.conj(f1 * rot)
+    xpower_spec = xpower_spec.mean(axis=0) # time average
 
-    # Average each row of PSDs together to get the visiblity
-    spec_vis = xcorr_array.mean(axis=0) # The spectral visibility
     if 'continuum' == mode: # don't save spectral information
-        vis = cp.mean(spec_vis) * rate # Total power est. from PSD, the visibility amplitude
+        vis = cp.mean(xpower_spec) * rate # Total power est. from PSD, the visibility amplitude
     else:
-        vis = spec_vis
+        vis = xpower_spec
 
     return vis
 
 
-def estimate_lag(iq_0, iq_1, rate, fc):
-    '''Returns integer and fractional sample lag estimates. The sum is the 
-    total estimated lag in samples between signals iq_0 and iq_1.
+def estimate_delay(iq_0, iq_1, rate, fc):
+    '''Returns delay estimate between channels in seconds.
     :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 0
     :param iq_1: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 1
     :param rate: float, SDR sample rate.
     :param fc: float, SDR center tuning frequency
-    :return: int, integer_lag, the integer lag between the argument signals in
-    samples, and frac_lag, the fractional lag between the argument signals in
-    fractions of a sample
+    :return: float, the delay estimate between channels in seconds
     :rtype: tuple
     '''
-    integer_lag = estimate_integer_lag(iq_0, iq_1)
-    frac_lag = estimate_fractional_lag(iq_0, iq_1, integer_lag, rate, fc)
+    integer_delay = estimate_integer_delay(iq_0, iq_1, rate)
+    frac_delay = estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
+    total_delay = integer_delay + frac_delay
 
-    return integer_lag, frac_lag
+    return total_delay
 
 
-def estimate_integer_lag(iq_0, iq_1):
-    '''Returns integer sample lag estimate in samples between signals iq_0 and
-    iq_1.
+def estimate_integer_delay(iq_0, iq_1, rate):
+    '''Returns delay estimate between channels to the nearest sample division.
     :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 0
     :param iq_1: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 1
-    :return: int, integer_lag, the integer lag between the argument signals in
-    samples
+    :param rate: float, SDR sample rate.
+    :return: float, the delay estimate between channels in seconds
     :rtype: int
     '''
-    # Find the integer number of samples of the delay 
-    # This is a common way to find lag in samples between timeseries, see
-    # https://www.dsprelated.com/showcode/207.php
-    xcorr = cp.fft.fft(cp.array(iq_0)) * cp.conj(cp.fft.fft(cp.array(iq_1)))
-    #fig = plt.figure(99)
-    #ax = plt.axes()
-    #ax.plot(cp.asnumpy(cp.abs(cp.fft.ifft(xcorr))))
-    #fig.show()
-    
-    integer_lag = int(cp.argmax(cp.abs(cp.fft.ifft(xcorr))))
-    return integer_lag
+    # TODO: lift constraint on equal-length timeseries
+    assert len(iq_0) == len(iq_1), ('Algorithm assumes input complex timeseries'
+        + ' are of equal length.')
+
+    # Find the delay to the nearest integer sample dt
+    # First, pad by length of signals
+    n = len(iq_0)
+    iq_0_padded = cp.zeros(2 * n, dtype=cp.complex128)
+    iq_1_padded = cp.zeros(2 * n, dtype=cp.complex128)
+    iq_0_padded[0:n] += cp.array(iq_0)
+    iq_1_padded[0:n] += cp.array(iq_1)
+
+    f0 = cp.fft.fft(cp.array(iq_0_padded))
+    f1 = cp.fft.fft(cp.array(iq_1_padded))
+    xcorr = cp.fft.ifft(f0 * cp.conj(f1))
+    xcorr = cp.fft.fftshift(xcorr)
+
+    integer_lag = n - int(cp.argmax(cp.abs(xcorr)))
+    integer_delay = integer_lag / rate
+
+    return integer_delay
 
 
-def estimate_fractional_lag(iq_0, iq_1, integer_lag, rate, fc):
-    '''Returns fractional sample lag estimate in samples between signals iq_0
-    and iq_1. First corrects integer sample lag to make estimating the
-    fractional lag tractable, then finds the slope of the phase of the cross-
-    correlation by linear regression to estimate the fractional lag.
+def estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc):
+    '''Returns fractional sampling time correction between channels in seconds.
+    First corrects integer sample lag to make estimating the fractional lag
+    tractable, then finds the slope of the phase of the cross-correlation by
+    linear regression to estimate the fractional sample delay.
     :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
     data from channel 0
     :param iq_1: cusignal mapped, pinned array of GPU memory containing
     SDR data from channel 1
-    :param integer_lag: int, estimated value from estimate_integer_lag()
+    :param integer_delay: int, estimated value from estimate_integer_delay()
     :param rate: float, SDR sample rate.
     :param fc: float, SDR center tuning frequency
-    :return: float, frac_lag, the fractional lag between the argument signals
-    in samples
+    :return: float, frac_delay, the fractional lag between the argument signals
+    in seconds
     :rtype: float
     '''
-    xcorr = cp.fft.fftshift(cp.fft.fft(cp.array(iq_0)) * cp.conj(cp.fft.fft(cp.array(iq_1))))
-    freqs = cp.fft.fftshift(cp.fft.fftfreq(len(xcorr), d=1/rate)) + fc
+    N = 8192
+    f0 = cp.fft.fftshift(cp.fft.fft(cp.array(iq_0), n=N))
+    f1 = cp.fft.fftshift(cp.fft.fft(cp.array(iq_1), n=N))
+    freqs = cp.fft.fftshift(cp.fft.fftfreq(N, d=1/rate)) + fc
+
+    # Yes, there is a double negative, for mathematical clarity. Most eqns
+    # have -i, and we are "undoing" the delay, so -delay.
+    rot = cp.exp(-2j * cp.pi * freqs * -integer_delay)
     # Integer sample correction as a phase rotation in frequency space
-    xcorr *= cp.exp(2j * cp.pi * freqs * (integer_lag / rate) )
+    xcorr = f0 * cp.conj(f1 * rot)
+
     # Prepare to fit residual phase gradient:
     phases = cp.angle(xcorr)
     # Due to receiver bandpass shape, edge frequencies have less power => less certain phase
@@ -199,9 +206,9 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag, rate, fc):
     )
     slope, intc = popt
 
-    frac_lag = slope * rate
+    frac_delay = slope
 
-    if np.abs(frac_lag) > 1:
+    if np.abs(frac_delay) > 1/rate:
         fig = plt.figure(100)
         ax = plt.axes()
         ax.scatter(cp.asnumpy(freqs), cp.asnumpy(phases), alpha=0.1, label='Calibration data: phase')
@@ -210,10 +217,10 @@ def estimate_fractional_lag(iq_0, iq_1, integer_lag, rate, fc):
         ax.set_ylabel('Phase (rad)')
         ax.legend(loc='best', framealpha=0.4)
         fig.show()
-        print('WARNING: Integer delay calibration failed: '
-            + 'calculated fractional sample delay |{}| > 1 '.format(frac_lag))
+        print('WARNING: 1st-pass delay calibration failed: '
+            + 'fractional sample time correction, |{}| > 1/sample rate, {} '.format(frac_delay, 1/rate))
 
-    return frac_lag
+    return frac_delay
 
 
 async def streaming(sdr, buf, num_samp, start_time, run_time):
@@ -303,13 +310,12 @@ def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mod
             # used as input on first cycle.
             # Estimate integer and fractional sample delays
             if first_time:
-                integer_lag, frac_lag = estimate_lag(gpu_iq_0, gpu_iq_1, rate, fc)
-                total_lag = integer_lag + frac_lag
-                print('Estimated lag (samples): {} + {}'.format(integer_lag, frac_lag))
+                total_delay = estimate_delay(gpu_iq_0, gpu_iq_1, rate, fc)
+                print('Estimated delay (ms): {}'.format(1e6 * total_delay))
+                first_time = False
 
-            visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_lag, nfft, rate, fc, mode)
+            visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_delay, nfft, rate, fc, mode)
             vis_out.append(visibility)
-            first_time = False
 
     return vis_out
 
@@ -346,7 +352,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
             with open(fname, 'a') as f:
                 np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
         else:
-            freqs = fc + np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate))
+            freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
             with open(fname, 'ab') as f:
                 np.savetxt(f, [freqs], delimiter=',')
                 np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
@@ -354,7 +360,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
         return fname
 
 
-    def visualize(visibilities, rate, nfft, num_samp, mode):
+    def visualize(visibilities, rate, fc, nfft, num_samp, mode):
         '''Handles plotting 1D continuum data or 2D spectrum data with respect to time.
         :param visibilites: ndim cupy array, output of correlator function pfb_xcorr
         :param mode: str, either 'continuum' for recording visibility amplitudes
@@ -408,7 +414,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
             axes[1][1].set_ylabel('Amplitude')
             axes[1][1].set_title('Complex Cross-Correlation Imag')
         else:
-            freqs = fc + np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate))
+            freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
             num_spectra = np.array(range(visibilities.shape[0]))
             X,Y = np.meshgrid(freqs, num_spectra)
 
@@ -448,7 +454,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
     fname = record_visibilities(visibilities, fc, mode)
     print('Data recorded to {}.'.format(fname))
 
-    visualize(visibilities, rate, nfft, num_samp, mode)
+    visualize(visibilities, rate, fc, nfft, num_samp, mode)
 
     return
 
