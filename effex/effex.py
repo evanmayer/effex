@@ -18,6 +18,10 @@ import cupy as cp
 import cusignal
 
 
+class Correlator(object):
+    pass
+
+
 def spectrometer_poly(x, n_taps, n_branches): 
     '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
     input array x, channelized into n_branches coefficients
