@@ -19,7 +19,69 @@ import cusignal
 
 
 class Correlator(object):
-    pass
+    '''
+    '''
+    # -------------------------------------------------------------------------
+    # Class constants
+    # -------------------------------------------------------------------------
+    states_ = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
+    modes_ = ('SPECTRUM', 'CONTINUUM')
+
+    # -------------------------------------------------------------------------
+    # Init
+    # -------------------------------------------------------------------------
+    def __init__(self, mode=None):
+        self.state_ = 'OFF'
+        if not mode:
+            self.mode_ = 'SPECTRUM'
+        else:
+            self.set_mode(mode)
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+    class StateTransitionError(Exception):
+        def __init__(self, prev, next):
+            self.prev = prev
+            self.next = next
+            self.message = f'Transition from {self.prev} to {self.next} is not permitted.'
+         
+        def __str__(self):
+            return repr(self.message)
+
+    # -------------------------------------------------------------------------
+    # Getters and setters
+    # -------------------------------------------------------------------------
+    def get_state(self):
+        return self.state_
+
+    def set_state(self, input_state):
+        if input_state in self.states_:
+            # State transition checking
+            if 'OFF' == self.state_ and 'STARTUP' != input_state:
+                raise self.StateTransitionError(self.state_, input_state)
+            if 'STARTUP' == self.state_ and input_state not in ('RUN', 'OFF'):
+                raise self.StateTransitionError(self.state_, input_state)
+            if 'RUN' == self.state_ and input_state not in ('CALIBRATE', 'DRAIN', 'OFF'):
+                raise self.StateTransitionError(self.state_, input_state)
+            if 'CALIBRATE' == self.state_ and input_state not in ('RUN', 'DRAIN', 'OFF'):
+                raise self.StateTransitionError(self.state_, input_state)
+            if 'DRAIN' == self.state_ and input_state not in ('RUN', 'CALIBRATE', 'OFF'):
+                raise self.StateTransitionError(self.state_, input_state)
+            self.state_ = input_state
+        else:
+            raise ValueError(f'State {input_state} is not in known states: {self.states_}')
+
+    def get_mode(self):
+        return self.mode_
+
+    def set_mode(self, input_mode):
+        if input_mode in self.modes_:
+            self.mode_ = input_mode
+        else:
+            raise ValueError(f'Mode input {input_mode} is not in known modes: {self.modes_}')
+                
+            
 
 
 def spectrometer_poly(x, n_taps, n_branches): 

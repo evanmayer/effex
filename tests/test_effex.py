@@ -77,6 +77,144 @@ def test_estimate_integer_delay(num_samp, rate, samp_offset_int):
     return
 
 
+def test_correlator_init():
+    # Test default init
+    cor = fx.Correlator()
+    assert('OFF' == cor.get_state())
+    assert('SPECTRUM' == cor.get_mode())
+
+    return
+
+
+def test_correlator_alt_init(): 
+    # Test alternate mode init
+    cor = fx.Correlator(mode='CONTINUUM')
+    assert('OFF' == cor.get_state())
+    assert('CONTINUUM' == cor.get_mode())
+
+    return
+
+
+def test_correlator_wrong_init():
+    # Test wrong mode init
+    # assume ValueError comes from us, not something else
+    with pytest.raises(ValueError):
+        cor = fx.Correlator(mode='FOO')
+
+    return
+
+
+def step_and_assert(sequence):
+    # helper for testing correlator state machine
+    cor = fx.Correlator()
+    for state in sequence:
+        cor.set_state(state)
+        assert(state == cor.get_state())
+
+    return
+
+
+def test_correlator_nominal_state_transitions():
+    cor = fx.Correlator()
+    nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'DRAIN', 'OFF')
+    step_and_assert(nom_sequence)
+    
+    return
+
+
+def test_correlator_early_aborts():
+    cor = fx.Correlator()
+    seq = ('STARTUP', 'OFF')
+    step_and_assert(seq)
+    seq = ('STARTUP', 'RUN', 'OFF')
+    step_and_assert(seq)
+    seq = ('STARTUP', 'RUN', 'CALIBRATE', 'OFF')
+    step_and_assert(seq)
+    seq = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'OFF')
+    step_and_assert(seq)
+
+    return
+
+
+def test_correlator_bad_state_transitions():
+    cor = fx.Correlator()
+    # Starting in OFF
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        # already off
+        cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        # can't run without starting up first
+        cor.set_state('RUN')
+
+    # Starting in STARTUP
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        # already starting
+        cor.set_state('STARTUP')
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        # can't calibrate without running first
+        cor.set_state('CALIBRATE')
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        # can't drain if not running
+        cor.set_state('DRAIN')
+
+    # Starting in RUN
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        # already running
+        cor.set_state('RUN')
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        # already started
+        cor.set_state('STARTUP')
+
+    # Starting in CALIBRATE
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        cor.set_state('CALIBRATE')
+        # already calibrating
+        cor.set_state('CALIBRATE')
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        cor.set_state('CALIBRATE')
+        # already started
+        cor.set_state('STARTUP')
+
+    # Starting in DRAIN
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        cor.set_state('CALIBRATE')
+        cor.set_state('RUN')
+        cor.set_state('DRAIN')
+        # already draining
+        cor.set_state('DRAIN')
+    cor.set_state('OFF')
+    with pytest.raises(fx.Correlator.StateTransitionError):
+        cor.set_state('STARTUP')
+        cor.set_state('RUN')
+        cor.set_state('CALIBRATE')
+        cor.set_state('RUN')
+        cor.set_state('DRAIN')
+        # already started
+        cor.set_state('STARTUP')
+
+    return
+
+
 def example_fstc(num_samp, rate, samp_offset_int):
     # This is to test the method of applying a phase shift to a signal by
     # multiplying its Fourier transform by a ifrequency-dependent complex
