@@ -56,8 +56,6 @@ def test_spectrometer_poly(num_samp, rate, freq, taps, branches, plot=False):
         ax.plot(cp.asnumpy(freqs), cp.asnumpy(psd))
         plt.show()
 
-    return
-
 
 @pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
 @pytest.mark.parametrize('rate', [2.4e6])
@@ -74,52 +72,85 @@ def test_estimate_integer_delay(num_samp, rate, samp_offset_int):
 
     assert(abs(samp_offset_int - est_delay_samples) < 1e-9)
 
-    return
-
 
 def test_correlator_init():
     # Test default init
     cor = fx.Correlator()
-    assert('OFF' == cor.get_state())
-    assert('SPECTRUM' == cor.get_mode())
+    assert('OFF' == cor.state)
+    assert('SPECTRUM' == cor.mode)
+    assert(2.4e6 == cor.bandwidth)
+    assert(2**12 == cor.nbins)
+    assert(1.4204e9 == cor.frequency)
+    assert(49.6 == cor.gain)
 
-    return
+
+def test_bad_run_time():
+    with pytest.raises(ValueError):
+        cor = fx.Correlator(run_time=0)
+
+
+def test_bad_bandwidth():
+    # Should just print a warning for now
+    cor = fx.Correlator(bandwidth=3.0e6)
+
+
+def test_change_bandwidth():
+    cor = fx.Correlator()
+    cor.state ='STARTUP'
+    cor.state = 'RUN'
+    cor.bandwidth = 2.3e6
+    assert(2.3e6 == cor.bandwidth)
+
+
+def test_change_nbins():
+    cor = fx.Correlator()
+    cor.state = 'STARTUP'
+    cor.state = 'RUN'
+    cor.nbins = 2**11
+    assert(2**11 == cor.nbins)
+
+
+def test_change_frequency():
+    cor = fx.Correlator()
+    cor.state = 'STARTUP'
+    cor.state = 'RUN'
+    cor.frequency = 1.419e9
+    assert(1.419e9 == cor.frequency)
+
+
+def test_change_gain():
+    cor = fx.Correlator()
+    cor.state = 'STARTUP'
+    cor.state = 'RUN'
+    cor.gain = 29.7
+    assert(29.7 == cor.gain)
 
 
 def test_correlator_alt_init(): 
     # Test alternate mode init
     cor = fx.Correlator(mode='CONTINUUM')
-    assert('OFF' == cor.get_state())
-    assert('CONTINUUM' == cor.get_mode())
-
-    return
+    assert('OFF' == cor.state)
+    assert('CONTINUUM' == cor.mode)
 
 
 def test_correlator_wrong_init():
     # Test wrong mode init
-    # assume ValueError comes from us, not something else
     with pytest.raises(ValueError):
         cor = fx.Correlator(mode='FOO')
-
-    return
 
 
 def step_and_assert(sequence):
     # helper for testing correlator state machine
     cor = fx.Correlator()
     for state in sequence:
-        cor.set_state(state)
-        assert(state == cor.get_state())
-
-    return
+        cor.state = state
+        assert(state == cor.state)
 
 
 def test_correlator_nominal_state_transitions():
     cor = fx.Correlator()
     nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'DRAIN', 'OFF')
     step_and_assert(nom_sequence)
-    
-    return
 
 
 def test_correlator_early_aborts():
@@ -133,86 +164,82 @@ def test_correlator_early_aborts():
     seq = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'OFF')
     step_and_assert(seq)
 
-    return
-
 
 def test_correlator_bad_state_transitions():
     cor = fx.Correlator()
     # Starting in OFF
     with pytest.raises(fx.Correlator.StateTransitionError):
         # already off
-        cor.set_state('OFF')
+        cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
         # can't run without starting up first
-        cor.set_state('RUN')
+        cor.state = 'RUN'
 
     # Starting in STARTUP
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
+        cor.state = 'STARTUP'
         # already starting
-        cor.set_state('STARTUP')
-    cor.set_state('OFF')
+        cor.state = 'STARTUP'
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
+        cor.state = 'STARTUP'
         # can't calibrate without running first
-        cor.set_state('CALIBRATE')
-    cor.set_state('OFF')
+        cor.state = 'CALIBRATE'
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
+        cor.state = 'STARTUP'
         # can't drain if not running
-        cor.set_state('DRAIN')
+        cor.state = 'DRAIN'
 
     # Starting in RUN
-    cor.set_state('OFF')
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
         # already running
-        cor.set_state('RUN')
-    cor.set_state('OFF')
+        cor.state = 'RUN'
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
         # already started
-        cor.set_state('STARTUP')
+        cor.state = 'STARTUP'
 
     # Starting in CALIBRATE
-    cor.set_state('OFF')
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
-        cor.set_state('CALIBRATE')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
+        cor.state = 'CALIBRATE'
         # already calibrating
-        cor.set_state('CALIBRATE')
-    cor.set_state('OFF')
+        cor.state = 'CALIBRATE'
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
-        cor.set_state('CALIBRATE')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
+        cor.state = 'CALIBRATE'
         # already started
-        cor.set_state('STARTUP')
+        cor.state = 'STARTUP'
 
     # Starting in DRAIN
-    cor.set_state('OFF')
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
-        cor.set_state('CALIBRATE')
-        cor.set_state('RUN')
-        cor.set_state('DRAIN')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
+        cor.state = 'CALIBRATE'
+        cor.state = 'RUN'
+        cor.state = 'DRAIN'
         # already draining
-        cor.set_state('DRAIN')
-    cor.set_state('OFF')
+        cor.state = 'DRAIN'
+    cor.state = 'OFF'
     with pytest.raises(fx.Correlator.StateTransitionError):
-        cor.set_state('STARTUP')
-        cor.set_state('RUN')
-        cor.set_state('CALIBRATE')
-        cor.set_state('RUN')
-        cor.set_state('DRAIN')
+        cor.state = 'STARTUP'
+        cor.state = 'RUN'
+        cor.state = 'CALIBRATE'
+        cor.state = 'RUN'
+        cor.state = 'DRAIN'
         # already started
-        cor.set_state('STARTUP')
-
-    return
+        cor.state = 'STARTUP'
 
 
 def example_fstc(num_samp, rate, samp_offset_int):
@@ -255,7 +282,6 @@ def example_fstc(num_samp, rate, samp_offset_int):
     ax.legend(loc='best')
     plt.show()
 
-    return
 
 if __name__ == "__main__":
     example_fstc(2**14, 2.4e6, -100)

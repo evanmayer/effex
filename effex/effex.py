@@ -24,18 +24,32 @@ class Correlator(object):
     # -------------------------------------------------------------------------
     # Class constants
     # -------------------------------------------------------------------------
-    states_ = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
-    modes_ = ('SPECTRUM', 'CONTINUUM')
+    _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
+    _modes = ('SPECTRUM', 'CONTINUUM')
 
     # -------------------------------------------------------------------------
     # Init
     # -------------------------------------------------------------------------
-    def __init__(self, mode=None):
-        self.state_ = 'OFF'
-        if not mode:
-            self.mode_ = 'SPECTRUM'
-        else:
-            self.set_mode(mode)
+    def __init__(self,
+                 run_time=1,
+                 bandwidth=2.4e6,
+                 frequency=1.4204e9,
+                 num_samp=2**18,
+                 nbins=2**12,
+                 gain=49.6,
+                 mode='SPECTRUM'):
+
+        self._state = 'OFF'
+        self.run_time = run_time
+        self.bandwidth = bandwidth
+        self.frequency = frequency
+        self.num_samp = num_samp
+        self.nbins = nbins
+        self.gain = gain
+        self.mode = mode
+
+        assert(self._state in self._states), f'State {self._state} not in allowed states {self._states}.'
+        assert(self._mode in self._modes), f'Mode {self._mode} not in allowed modes {self._modes}.'
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -49,39 +63,65 @@ class Correlator(object):
         def __str__(self):
             return repr(self.message)
 
-    # -------------------------------------------------------------------------
-    # Getters and setters
-    # -------------------------------------------------------------------------
-    def get_state(self):
-        return self.state_
+    @property
+    def state(self):
+        '''The current state in the correlator's internal state machine.'''
+        return self._state
 
-    def set_state(self, input_state):
-        if input_state in self.states_:
+    @state.setter
+    def state(self, input_state):
+        '''This state setter is used post-init to handle state transitions. State always starts out OFF.'''
+        if input_state in self._states:
             # State transition checking
-            if 'OFF' == self.state_ and 'STARTUP' != input_state:
-                raise self.StateTransitionError(self.state_, input_state)
-            if 'STARTUP' == self.state_ and input_state not in ('RUN', 'OFF'):
-                raise self.StateTransitionError(self.state_, input_state)
-            if 'RUN' == self.state_ and input_state not in ('CALIBRATE', 'DRAIN', 'OFF'):
-                raise self.StateTransitionError(self.state_, input_state)
-            if 'CALIBRATE' == self.state_ and input_state not in ('RUN', 'DRAIN', 'OFF'):
-                raise self.StateTransitionError(self.state_, input_state)
-            if 'DRAIN' == self.state_ and input_state not in ('RUN', 'CALIBRATE', 'OFF'):
-                raise self.StateTransitionError(self.state_, input_state)
-            self.state_ = input_state
+            if 'OFF' == self.state and 'STARTUP' != input_state:
+                raise self.StateTransitionError(self.state, input_state)
+            if 'STARTUP' == self.state and input_state not in ('RUN', 'OFF'):
+                raise self.StateTransitionError(self.state, input_state)
+            if 'RUN' == self.state and input_state not in ('CALIBRATE', 'DRAIN', 'OFF'):
+                raise self.StateTransitionError(self.state, input_state)
+            if 'CALIBRATE' == self.state and input_state not in ('RUN', 'DRAIN', 'OFF'):
+                raise self.StateTransitionError(self.state, input_state)
+            if 'DRAIN' == self.state and input_state not in ('RUN', 'CALIBRATE', 'OFF'):
+                raise self.StateTransitionError(self.state, input_state)
+            self._state = input_state
         else:
             raise ValueError(f'State {input_state} is not in known states: {self.states_}')
 
-    def get_mode(self):
-        return self.mode_
+    @property
+    def run_time(self):
+        '''The amount of real-world time after which the correlator will shut down.'''
+        return self._run_time
 
-    def set_mode(self, input_mode):
-        if input_mode in self.modes_:
-            self.mode_ = input_mode
+    @run_time.setter
+    def run_time(self, run_time):
+        if run_time < 1:
+            raise ValueError(f'run time {run_time} is not allowed; run times must be >= 1 second.')
         else:
-            raise ValueError(f'Mode input {input_mode} is not in known modes: {self.modes_}')
-                
-            
+            self._run_time = run_time
+
+    @property
+    def bandwidth(self):
+        '''The width in frequency over which observation takes place. Intrinsically tied to sample rate in SDRs.'''
+        return self._bandwidth
+
+    @bandwidth.setter
+    def bandwidth(self, value):
+        threshold = 2.8e6
+        if value > threshold:
+            print(f'WARNING: bandwidth value {value} is greater than {threshold}, and RtlSdrs may not be stable.')
+        self._bandwidth = value
+
+    @property
+    def mode(self):
+        '''The current data processing mode.'''
+        return self._mode
+
+    @mode.setter
+    def mode(self, input_mode):
+        if input_mode in self._modes:
+            self._mode = input_mode
+        else:
+            raise ValueError(f'Mode input {input_mode} is not in known modes: {self._modes}')
 
 
 def spectrometer_poly(x, n_taps, n_branches): 
@@ -317,8 +357,6 @@ async def streaming(sdr, buf, num_samp, start_time, run_time):
                                                                                                                
     print('Buffering ended at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(time.time()))))
 
-    return
-
 
 def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mode):
     '''This is the main function of the correlator. It holds on to two
@@ -513,7 +551,6 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
             fig.colorbar(im11, ax=axes[1][1])
                                                                                           
         plt.show()
-
         return
 
     # Convert list to cupy array
@@ -523,6 +560,4 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
     print('Data recorded to {}.'.format(fname))
 
     visualize(visibilities, rate, fc, nfft, num_samp, mode)
-
-    return
 
