@@ -82,6 +82,7 @@ def test_correlator_init():
     assert(2**12 == cor.nbins)
     assert(1.4204e9 == cor.frequency)
     assert(49.6 == cor.gain)
+    cor.close()
 
 
 def test_bad_run_time():
@@ -92,6 +93,7 @@ def test_bad_run_time():
 def test_bad_bandwidth():
     # Should just print a warning for now
     cor = fx.Correlator(bandwidth=3.0e6)
+    cor.close()
 
 
 def test_change_bandwidth():
@@ -100,6 +102,7 @@ def test_change_bandwidth():
     cor.state = 'RUN'
     cor.bandwidth = 2.3e6
     assert(2.3e6 == cor.bandwidth)
+    cor.close()
 
 
 def test_change_nbins():
@@ -108,6 +111,7 @@ def test_change_nbins():
     cor.state = 'RUN'
     cor.nbins = 2**11
     assert(2**11 == cor.nbins)
+    cor.close()
 
 
 def test_change_frequency():
@@ -116,6 +120,7 @@ def test_change_frequency():
     cor.state = 'RUN'
     cor.frequency = 1.419e9
     assert(1.419e9 == cor.frequency)
+    cor.close()
 
 
 def test_change_gain():
@@ -124,6 +129,7 @@ def test_change_gain():
     cor.state = 'RUN'
     cor.gain = 29.7
     assert(29.7 == cor.gain)
+    cor.close()
 
 
 def test_correlator_alt_init(): 
@@ -131,6 +137,7 @@ def test_correlator_alt_init():
     cor = fx.Correlator(mode='CONTINUUM')
     assert('OFF' == cor.state)
     assert('CONTINUUM' == cor.mode)
+    cor.close()
 
 
 def test_correlator_wrong_init():
@@ -145,16 +152,15 @@ def step_and_assert(sequence):
     for state in sequence:
         cor.state = state
         assert(state == cor.state)
+    cor.close()
 
 
 def test_correlator_nominal_state_transitions():
-    cor = fx.Correlator()
     nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'DRAIN', 'OFF')
     step_and_assert(nom_sequence)
 
 
 def test_correlator_early_aborts():
-    cor = fx.Correlator()
     seq = ('STARTUP', 'OFF')
     step_and_assert(seq)
     seq = ('STARTUP', 'RUN', 'OFF')

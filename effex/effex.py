@@ -8,14 +8,19 @@ Then the two streams are combined by cross-correlation.
 
 import asyncio
 import concurrent.futures
+import contextlib
 import matplotlib.pyplot as plt
+import multiprocessing
 import numpy as np
 from scipy import optimize
 from scipy import stats
+import sys
 import time
 
 import cupy as cp
 import cusignal
+
+from rtlsdr import RtlSdr
 
 
 class Correlator(object):
@@ -26,9 +31,13 @@ class Correlator(object):
     # -------------------------------------------------------------------------
     _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
     _modes = ('SPECTRUM', 'CONTINUUM')
+    # sized for 4GB RAM on NVIDIA Jetson Nano
+    BUFFER_SIZE =  int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
+    # allow some time for streaming subprocesses to get to starting line
+    STARTUP_DURATION = 1. # sec
 
     # -------------------------------------------------------------------------
-    # Init
+    # Init and destruct
     # -------------------------------------------------------------------------
     def __init__(self,
                  run_time=1,
@@ -38,6 +47,9 @@ class Correlator(object):
                  nbins=2**12,
                  gain=49.6,
                  mode='SPECTRUM'):
+
+        self.sdr0 = RtlSdr(device_index=0, dithering_enabled=False)        
+        self.sdr1 = RtlSdr(device_index=1, dithering_enabled=False)
 
         self._state = 'OFF'
         self.run_time = run_time
@@ -50,6 +62,10 @@ class Correlator(object):
 
         assert(self._state in self._states), f'State {self._state} not in allowed states {self._states}.'
         assert(self._mode in self._modes), f'Mode {self._mode} not in allowed modes {self._modes}.'
+
+    def close(self):
+        self.sdr0.close()
+        self.sdr1.close()
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -110,6 +126,30 @@ class Correlator(object):
         if value > threshold:
             print(f'WARNING: bandwidth value {value} is greater than {threshold}, and RtlSdrs may not be stable.')
         self._bandwidth = value
+        self.sdr0.rs = self._bandwidth
+        self.sdr1.rs = self._bandwidth
+
+    @property
+    def frequency(self):
+        '''The center tuning frequency of the correlator.'''
+        return self._frequency
+
+    @frequency.setter
+    def frequency(self, value):
+        self._frequency = value
+        self.sdr0.fc = self._frequency
+        self.sdr1.fc = self._frequency
+
+    @property
+    def gain(self):
+        '''The tuner gain of the RtlSdr devices.'''
+        return self._gain
+                                                             
+    @gain.setter
+    def gain(self, value):
+        self._gain = value
+        self.sdr0.gain = self._gain
+        self.sdr1.gain = self._gain
 
     @property
     def mode(self):
