@@ -360,7 +360,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
         return fname
 
 
-    def visualize(visibilities, rate, fc, nfft, num_samp, mode):
+    def visualize(visibilities, rate, fc, nfft, num_samp, mode, omit_plot):
         '''Handles plotting 1D continuum data or 2D spectrum data with respect to time.
         :param visibilites: ndim cupy array, output of correlator function pfb_xcorr
         :param mode: str, either 'continuum' for recording visibility amplitudes
@@ -456,7 +456,8 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
     fname = record_visibilities(visibilities, fc, mode)
     print('Data recorded to {}.'.format(fname))
 
-    visualize(visibilities, rate, fc, nfft, num_samp, mode)
+    if not omit_plot:
+        visualize(visibilities, rate, fc, nfft, num_samp, mode)
 
     return
 
