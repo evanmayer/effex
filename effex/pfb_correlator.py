@@ -40,6 +40,8 @@ if __name__ == "__main__":
         help='(dB) Tuner gain in Decibels. Tuner gain has an impact on receiver sensitivity and may affect clock stability due to heat generation. Applied to both channels.')
     parser.add_argument('--mode',       '-M', default='spectrum', type=str, choices=['continuum', 'spectrum'], dest='mode', 
         help='(str) Choose one: continuum mode estimates visibility amplitude over time, throwing away phase and frequency information. Spectrum mode keeps complex visibilities. Affects data memory usage, visualization speed, and output file size.')
+    parser.add_argument('--omit_plot',  '-P', default=False, type=bool, dest='omit_plot', 
+        help='If True, skip post-processing step using matplotlib to visualize recorded data. This may help avoid memory usage problems on low-memory systems. Raw data will still be recorded to a file for further post-processing.')
 
     args = parser.parse_args()
 
@@ -104,5 +106,5 @@ if __name__ == "__main__":
     sdr_1.close()
     print('SDRs closed.')
 
-    fx.post_process(raw_output, args.rate, args.fc, args.nfft, args.num_samp, args.mode)
+    fx.post_process(raw_output, args.rate, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
 

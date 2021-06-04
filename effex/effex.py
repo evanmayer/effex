@@ -464,7 +464,7 @@ def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mod
     return vis_out
 
 
-def post_process(raw_output, rate, fc, nfft, num_samp, mode):
+def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
     '''Handles saving and displaying data.
     :param raw_output: python list, if mode 'continuum', a list of visibility
     amplitudes, if mode 'spectrum', a list of cupy arrays, each
@@ -477,6 +477,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
     :param mode: str, either 'continuum' for recording visibility amplitudes
     with time, or 'spectrum' for recording spectrum visibilities with time.
     Defaults to 'continuum'.
+    :param omit_plot: bool, if True, don't plot recorded data with matplotlib.
     :return: fname, the filename to which output processed data is written
     :rtype: str
     '''
@@ -599,5 +600,6 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode):
     fname = record_visibilities(visibilities, fc, mode)
     print('Data recorded to {}.'.format(fname))
 
-    visualize(visibilities, rate, fc, nfft, num_samp, mode)
+    if not omit_plot:
+        visualize(visibilities, rate, fc, nfft, num_samp, mode)
 
