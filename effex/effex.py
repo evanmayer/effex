@@ -693,3 +693,4 @@ class Correlator(object):
         if not omit_plot:
             visualize(visibilities, rate, fc, nfft, num_samp, mode)
 
+
