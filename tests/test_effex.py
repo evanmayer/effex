@@ -135,12 +135,12 @@ class TestNominal(object):
         assert(29.7 == cor.gain)
     
     
-    def test_correlator_nominal_state_transitions(self, cor):
+    def test_nominal_state_transitions(self, cor):
         nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'DRAIN', 'OFF')
         self.step_and_assert(cor, nom_sequence)
     
     
-    def test_correlator_early_aborts(self, cor):
+    def test_early_aborts(self, cor):
         seq = ('STARTUP', 'OFF')
         self.step_and_assert(cor, seq)
         seq = ('STARTUP', 'RUN', 'OFF')
@@ -151,7 +151,7 @@ class TestNominal(object):
         self.step_and_assert(cor, seq)
     
     
-    def test_correlator_bad_state_transitions(self, cor):
+    def test_bad_state_transitions(self, cor):
         # Starting in OFF
         with pytest.raises(fx.Correlator.StateTransitionError):
             # already off
@@ -242,13 +242,13 @@ def test_bad_bandwidth_init():
     bad_cor.close()
 
 
-def test_correlator_bad_mode_init():
+def test_bad_mode_init():
     with pytest.raises(ValueError):
         bad_cor = fx.Correlator(mode='FOO')
         bad_cor.close()
 
 
-def test_correlator_alt_mode_init(): 
+def test_alt_mode_init(): 
     # Test alternate mode init
     alt_cor = fx.Correlator(mode='CONTINUUM')
     assert('OFF' == alt_cor.state)
