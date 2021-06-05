@@ -28,7 +28,7 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--time',       '-T', default=1, type=float, dest='run_time',
         help='(sec) Total amount of time to run correlator.')
-    parser.add_argument('--bandwidth',  '-B', default=2.4e6, type=float, dest='rate',
+    parser.add_argument('--bandwidth',  '-B', default=2.4e6, type=float, dest='bandwidth',
         help='(Hz) Receiver bandwidth. For RTL-SDR dongles, this determines sample rate. Applied to both channels.')
     parser.add_argument('--frequency',  '-F', default=1.4204e9, type=float, dest='fc',
         help='(Hz) Receiver center tuning frequency. Applied to both channels.')
@@ -45,66 +45,15 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # -------------------------------------------------------------------------
-    # CORRELATOR INIT
-    # -------------------------------------------------------------------------
-    #cor = fx.Correlator()
+    cor = fx.Correlator(run_time=args.run_time,
+                        bandwidth=args.bandwidth,
+                        frequency=args.fc,
+                        num_samp=args.num_samp,
+                        nbins=args.nfft,
+                        gain=args.gain,
+                        mode=args.mode)
+    cor.run_state_machine()
+    cor.close()
 
-    # -------------------------------------------------------------------------
-    # SDR INIT
-    # -------------------------------------------------------------------------
-    # Dithering depends on evanmayer's fork of roger-'s pyrtlsdr and keenerd's
-    # experimental fork of librtlsdr
-    sdr_0 = RtlSdr(device_index=0, dithering_enabled=False)
-    sdr_1 = RtlSdr(device_index=1, dithering_enabled=False)
-    sdr_0.rs = args.rate
-    sdr_1.rs = args.rate
-    sdr_0.fc = args.fc
-    sdr_1.fc = args.fc
-    sdr_0.gain = args.gain
-    sdr_1.gain = args.gain
-    
-    # -------------------------------------------------------------------------
-    # CPU & GPU MEMORY SETUP
-    # -------------------------------------------------------------------------
-    iq_0 = np.array([], dtype=np.complex128)
-    iq_1 = np.array([], dtype=np.complex128)
-
-    # Store sample chunks in 2 deques
-    buf_0 = multiprocessing.Queue(d_len)
-    buf_1 = multiprocessing.Queue(d_len)
-
-    # -------------------------------------------------------------------------
-    # RUN 
-    # -------------------------------------------------------------------------
-    start_time = time.time() + streaming_fudge_factor
-    print('Interferometry begins at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(start_time))))
-    # IQ source processes
-    # ECM: FIXME:
-    # streaming() is an async function, so this will throw a warning about 
-    # not awaiting it, but of course it's being run by asyncio.run, just not
-    # here. There might be another way to do this, but this works for now.
-    proc_0 = fx.streaming(sdr_0, buf_0, args.num_samp, start_time, args.run_time)
-    producer_0 = multiprocessing.Process(target=asyncio.run, args=(proc_0,))
-    proc_1 = fx.streaming(sdr_1, buf_1, args.num_samp, start_time, args.run_time)
-    producer_1 = multiprocessing.Process(target=asyncio.run, args=(proc_1,))
-    producer_0.start()
-    producer_1.start()
-    
-    # IQ sink
-    raw_output = fx.process_iq(buf_0, buf_1,
-                              args.num_samp,
-                              args.nfft,
-                              args.rate,
-                              args.fc,
-                              start_time, args.run_time,
-                              mode=args.mode)
-
-    print('IQ processing complete, buffers drained.')
-
-    sdr_0.close()
-    sdr_1.close()
-    print('SDRs closed.')
-
-    fx.post_process(raw_output, args.rate, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
+    fx.post_process(cor.vis_out, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
 

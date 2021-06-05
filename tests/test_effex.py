@@ -9,6 +9,9 @@ import pytest
 
 cp.random.seed(77777)
 
+# -----------------------------------------------------------------------------
+# Function-level testing
+# -----------------------------------------------------------------------------
 def gen_complex_sinusoid(num_samp, rate, freq, noisy=False):
     time = num_samp / rate
     t = cp.linspace(0, time, num=num_samp)
@@ -35,7 +38,7 @@ def gen_complex_noise(num_samp, rate, scale=.1):
 @pytest.mark.parametrize('freq', [2e4, 1e5])
 @pytest.mark.parametrize('taps', [4, 32])
 @pytest.mark.parametrize('branches', [2048, 4096])
-def test_spectrometer_poly(num_samp, rate, freq, taps, branches, plot=False):
+def test_func_spectrometer_poly(num_samp, rate, freq, taps, branches, plot=False):
     # This is to test that the PFB frontend and subsequent methods of
     # generating a power spectrum are valid, by identifying a frequency
     # component of known value.
@@ -60,7 +63,7 @@ def test_spectrometer_poly(num_samp, rate, freq, taps, branches, plot=False):
 @pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
 @pytest.mark.parametrize('rate', [2.4e6])
 @pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
-def test_estimate_integer_delay(num_samp, rate, samp_offset_int):
+def test_func_estimate_integer_delay(num_samp, rate, samp_offset_int):
     # This is to test that integer-sample delay estimation is functioning by
     # artificially applying a known delay and estimating it like we would with
     # no a priori knowledge
@@ -73,6 +76,9 @@ def test_estimate_integer_delay(num_samp, rate, samp_offset_int):
     assert(abs(samp_offset_int - est_delay_samples) < 1e-9)
 
 
+# -----------------------------------------------------------------------------
+# System-level testing
+# -----------------------------------------------------------------------------
 def test_correlator_init():
     # Test default init
     cor = fx.Correlator()
@@ -98,8 +104,6 @@ def test_bad_bandwidth():
 
 def test_change_bandwidth():
     cor = fx.Correlator()
-    cor.state ='STARTUP'
-    cor.state = 'RUN'
     cor.bandwidth = 2.3e6
     assert(2.3e6 == cor.bandwidth)
     cor.close()
@@ -107,8 +111,6 @@ def test_change_bandwidth():
 
 def test_change_nbins():
     cor = fx.Correlator()
-    cor.state = 'STARTUP'
-    cor.state = 'RUN'
     cor.nbins = 2**11
     assert(2**11 == cor.nbins)
     cor.close()
@@ -116,8 +118,6 @@ def test_change_nbins():
 
 def test_change_frequency():
     cor = fx.Correlator()
-    cor.state = 'STARTUP'
-    cor.state = 'RUN'
     cor.frequency = 1.419e9
     assert(1.419e9 == cor.frequency)
     cor.close()
@@ -125,8 +125,6 @@ def test_change_frequency():
 
 def test_change_gain():
     cor = fx.Correlator()
-    cor.state = 'STARTUP'
-    cor.state = 'RUN'
     cor.gain = 29.7
     assert(29.7 == cor.gain)
     cor.close()

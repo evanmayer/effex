@@ -32,7 +32,7 @@ class Correlator(object):
     _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
     _modes = ('SPECTRUM', 'CONTINUUM')
     # sized for 4GB RAM on NVIDIA Jetson Nano
-    BUFFER_SIZE =  int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
+    BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
     # allow some time for streaming subprocesses to get to starting line
     STARTUP_DURATION = 1. # sec
 
@@ -48,24 +48,55 @@ class Correlator(object):
                  gain=49.6,
                  mode='SPECTRUM'):
 
-        self.sdr0 = RtlSdr(device_index=0, dithering_enabled=False)        
+        # ---------------------------------------------------------------------
+        # SDR INIT
+        # ---------------------------------------------------------------------
+        # Dithering depends on evanmayer's fork of roger-'s pyrtlsdr and
+        # keenerd's experimental fork of librtlsdr
+        self.sdr0 = RtlSdr(device_index=0, dithering_enabled=False)
         self.sdr1 = RtlSdr(device_index=1, dithering_enabled=False)
 
-        self._state = 'OFF'
         self.run_time = run_time
         self.bandwidth = bandwidth
         self.frequency = frequency
         self.num_samp = num_samp
         self.nbins = nbins
         self.gain = gain
+
+        # ----------------------------------------------------------------------
+        # STATE MACHINE INIT
+        # ----------------------------------------------------------------------
+        self._state = 'OFF'
         self.mode = mode
 
         assert(self._state in self._states), f'State {self._state} not in allowed states {self._states}.'
-        assert(self._mode in self._modes), f'Mode {self._mode} not in allowed modes {self._modes}.'
+
+        self.start_time = -1
+
+        # ----------------------------------------------------------------------
+        # CPU & GPU MEMORY SETUP
+        # ----------------------------------------------------------------------
+        # Store sample chunks in 2 deques
+        self.buf0 = multiprocessing.Queue(Correlator.BUFFER_SIZE)
+        self.buf1 = multiprocessing.Queue(Correlator.BUFFER_SIZE)
+
+        # Create mapped, pinned memory for zero copy between CPU and GPU
+        self.gpu_iq_0 = cusignal.get_shared_mem(self.num_samp, dtype=np.complex128)
+        self.gpu_iq_1 = cusignal.get_shared_mem(self.num_samp, dtype=np.complex128)
+
+        # ---------------------------------------------------------------------
+        # SCIENCE DATA
+        # --------------------------------------------------------------------
+        self.calibrated_delay = 0 # seconds
+        # Store off cross-correlated chunks of IQ samples
+        self.vis_out = []
+
 
     def close(self):
         self.sdr0.close()
         self.sdr1.close()
+        print('SDRs closed.')
+
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -79,6 +110,7 @@ class Correlator(object):
         def __str__(self):
             return repr(self.message)
 
+
     @property
     def state(self):
         '''The current state in the correlator's internal state machine.'''
@@ -90,18 +122,26 @@ class Correlator(object):
         if input_state in self._states:
             # State transition checking
             if 'OFF' == self.state and 'STARTUP' != input_state:
+                self.close()
                 raise self.StateTransitionError(self.state, input_state)
             if 'STARTUP' == self.state and input_state not in ('RUN', 'OFF'):
+                self.close()
                 raise self.StateTransitionError(self.state, input_state)
             if 'RUN' == self.state and input_state not in ('CALIBRATE', 'DRAIN', 'OFF'):
+                self.close()
                 raise self.StateTransitionError(self.state, input_state)
             if 'CALIBRATE' == self.state and input_state not in ('RUN', 'DRAIN', 'OFF'):
+                self.close()
                 raise self.StateTransitionError(self.state, input_state)
             if 'DRAIN' == self.state and input_state not in ('RUN', 'CALIBRATE', 'OFF'):
+                self.close()
                 raise self.StateTransitionError(self.state, input_state)
+            # Bookkeeping
             self._state = input_state
         else:
+            self.close()
             raise ValueError(f'State {input_state} is not in known states: {self.states_}')
+
 
     @property
     def run_time(self):
@@ -114,6 +154,7 @@ class Correlator(object):
             raise ValueError(f'run time {run_time} is not allowed; run times must be >= 1 second.')
         else:
             self._run_time = run_time
+
 
     @property
     def bandwidth(self):
@@ -129,6 +170,7 @@ class Correlator(object):
         self.sdr0.rs = self._bandwidth
         self.sdr1.rs = self._bandwidth
 
+
     @property
     def frequency(self):
         '''The center tuning frequency of the correlator.'''
@@ -139,6 +181,7 @@ class Correlator(object):
         self._frequency = value
         self.sdr0.fc = self._frequency
         self.sdr1.fc = self._frequency
+
 
     @property
     def gain(self):
@@ -151,6 +194,7 @@ class Correlator(object):
         self.sdr0.gain = self._gain
         self.sdr1.gain = self._gain
 
+
     @property
     def mode(self):
         '''The current data processing mode.'''
@@ -158,10 +202,117 @@ class Correlator(object):
 
     @mode.setter
     def mode(self, input_mode):
+        input_mode = input_mode.upper()
         if input_mode in self._modes:
             self._mode = input_mode
         else:
             raise ValueError(f'Mode input {input_mode} is not in known modes: {self._modes}')
+
+
+    def run_state_machine(self):
+        '''
+        Main state machine.
+        '''
+        first_pass = True
+        while True:
+            if 'OFF' == self.state:
+                self.state = 'STARTUP'
+                continue
+            elif 'STARTUP' == self.state:
+                self.startup_task()
+                self.state = 'RUN'
+            # Should we be pulling data?
+            elif self.state in ['CALIBRATE', 'RUN']:
+                if time.time() < self.start_time:
+                    continue
+                buf0_empty = False
+                buf1_empty = False
+                try: 
+                    data_0 = self.buf0.get(block=True, timeout=1)
+                except:
+                    buf0_empty = True
+                try: 
+                    data_1 = self.buf1.get(block=True, timeout=1)
+                except:
+                    buf1_empty = True
+                # Is it time to stop?
+                if (buf0_empty and buf1_empty):
+                    if time.time() - self.start_time < self.run_time:
+                        continue
+                    else:
+                        print('IQ processing complete, buffers drained.')
+                        self.state = 'OFF'
+                        break
+                else:
+                    # Complex chunks of IQ data vs. time go over to GPU
+                    self.gpu_iq_0[:] = data_0
+                    self.gpu_iq_1[:] = data_1
+
+                if first_pass:
+                    self.state = 'CALIBRATE'
+                    first_pass = False
+            if 'CALIBRATE' == self.state:
+                self.calibrate_task()
+                # For now, calibration only consumes one pair of sample chunks
+                self.state = 'RUN'
+            elif 'RUN' == self.state:
+                visibility = self.run_task()
+                self.vis_out.append(visibility)
+
+
+    def startup_task(self):
+        '''
+        Initialize sub-processes to start async streaming from SDRs to sample chunk buffers.
+        '''
+        self.start_time = time.time() + Correlator.STARTUP_DURATION
+        print('Interferometry begins at {}'.format(
+            time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(self.start_time))))
+        # IQ source processes
+        # ECM: FIXME:
+        # streaming() is an async function, so this will throw a warning about 
+        # not awaiting it, but of course it's being run by asyncio.run, just not
+        # here. There might be another way to do this, but this works for now.
+        proc_0 = streaming(self.sdr0,
+                           self.buf0,
+                           self.num_samp,
+                           self.start_time,
+                           self.run_time)
+        producer_0 = multiprocessing.Process(target=asyncio.run, args=(proc_0,))
+        proc_1 = streaming(self.sdr1,
+                           self.buf1,
+                           self.num_samp,
+                           self.start_time,
+                           self.run_time)
+        producer_1 = multiprocessing.Process(target=asyncio.run, args=(proc_1,))
+        producer_0.start()
+        producer_1.start()
+
+
+    def calibrate_task(self):
+        '''
+        Use the data currently in the GPU memory to estimate and store the time delay between channels.
+        '''
+        # Calibration assumes a noise source w/flat PSD in-band is 
+        # used as input
+        # Estimate integer and fractional sample delays
+        self.calibrated_delay = estimate_delay(self.gpu_iq_0,
+                                               self.gpu_iq_1,
+                                               self.bandwidth,
+                                               self.frequency)
+        print('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
+       
+
+    def run_task(self):
+        '''
+        Use the data currently in the GPU memory to calculate the complex cross-correlation.
+        '''
+        return pfb_xcorr(self.gpu_iq_0,
+                         self.gpu_iq_1,
+                         self.calibrated_delay,
+                         self.nbins,
+                         self.bandwidth,
+                         self.frequency,
+                         self.mode)
 
 
 def spectrometer_poly(x, n_taps, n_branches): 
@@ -396,72 +547,6 @@ async def streaming(sdr, buf, num_samp, start_time, run_time):
         await sdr.stop()
                                                                                                                
     print('Buffering ended at {}'.format(time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(time.time()))))
-
-
-def process_iq(buf_0, buf_1, num_samp, nfft, rate, fc, start_time, run_time, mode):
-    '''This is the main function of the correlator. It holds on to two
-    multiprocessing.Queue() instances, one for each SDR channel, and handles
-    taking chunks of num_samp IQ samples off of each buffer and sending them to
-    mapped, pinned GPU memory to keep the polyphase filterbank-driven cross-
-    correlation function fed. It also handles calculating and calibrating out
-    the initial delay caused by cables and USB sampling between the SDR
-    channels to "phase-up" the array. 
-    :param buf_0: multiprocessing.Queue() instance
-    :param buf_1: multiprocessing.Queue() instance
-    :param num_samp: int, number of samples to read async from sdr at a time.
-    2^18 works well for RTL-SDRblog v3 dongles.
-    :param nfft: int, number of fft bins to use in psd.
-    :param rate: float, SDR sample rate.
-    :param fc: float, SDR center tuning frequency
-    :param start_time: float, time in ms since UNIX epoch to begin streaming
-    async samples. Helps multiple streaming processes start closer to the same time.
-    :param run_time: float, time in ms since UNIX epoch to end streaming async
-    samples.
-    :param mode: str, either 'continuum' for recording visibility amplitudes
-    with time, or 'spectrum' for recording spectrum visibilities with time.
-    Defaults to 'continuum'.
-    :return: vis_out, a list of either floats or cupy.arrays, depending on mode.
-    '''
-    # Store off cross-correlated chunks of IQ samples
-    vis_out = []
-    # Create mapped, pinned memory for zero copy between CPU and GPU
-    gpu_iq_0 = cusignal.get_shared_mem(num_samp, dtype=np.complex128)
-    gpu_iq_1 = cusignal.get_shared_mem(num_samp, dtype=np.complex128)
-    first_time = True
-    while True:
-        buf_0_empty = False
-        buf_1_empty = False
-        if time.time() < start_time:
-            continue
-        try: 
-            data_0 = buf_0.get(block=True, timeout=1)
-        except:
-            buf_0_empty = True
-        try: 
-            data_1 = buf_1.get(block=True, timeout=1)
-        except:
-            buf_1_empty = True
-        if (buf_0_empty and buf_1_empty):
-            if time.time()-start_time < run_time:
-                continue
-            else:
-                break
-        else:
-            # Complex chunks of IQ data vs. time go over to GPU
-            gpu_iq_0[:] = data_0
-            gpu_iq_1[:] = data_1
-            # Self-calibration assumes a noise source w/flat PSD in-band is 
-            # used as input on first cycle.
-            # Estimate integer and fractional sample delays
-            if first_time:
-                total_delay = estimate_delay(gpu_iq_0, gpu_iq_1, rate, fc)
-                print('Estimated delay (us): {}'.format(1e6 * total_delay))
-                first_time = False
-
-            visibility = pfb_xcorr(gpu_iq_0, gpu_iq_1, total_delay, nfft, rate, fc, mode)
-            vis_out.append(visibility)
-
-    return vis_out
 
 
 def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
