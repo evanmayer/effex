@@ -14,7 +14,7 @@ cp.random.seed(77777)
 # ------------------------------------------------------------------------------
 @pytest.fixture(scope='class')
 def cor():
-    # Module scope cuts down on time spent init-ing SDRs
+    # Class scope cuts down on time spent init-ing SDRs
     # Used by any test function that needs a default correlator instance
     print('New correlator instance')
     cor_fixture = fx.Correlator()
