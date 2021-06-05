@@ -1,6 +1,6 @@
 # effex
 
-effex computes the [cross-correlation](https://en.wikipedia.org/wiki/Cross-correlation) of signals from two USB software-defined radios ([RTL-SDR](https://www.rtl-sdr.com/about-rtl-sdr/)s) with synchronized clocks. This has applications in radio astronomy and remote sensing.
+effex is a software-defined [correlator](https://astronomy.swin.edu.au/cosmos/C/Correlator). It computes the [cross-correlation](https://en.wikipedia.org/wiki/Cross-correlation) of signals from two USB software-defined radios ([RTL-SDR](https://www.rtl-sdr.com/about-rtl-sdr/)s) with synchronized clocks. This has applications in radio astronomy and remote sensing.
 
 The library is written in Python and is driven by a command line application:
 
