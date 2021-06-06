@@ -84,19 +84,19 @@ class Correlator(object):
         # ----------------------------------------------------------------------
         # SPECTROMETER SETUP
         # ----------------------------------------------------------------------
-        self.n_taps = 4 # Number of taps in PFB
-        # Constraint: input timeseries only affords us n_taps * n_int ffts
+        self.ntaps = 4 # Number of taps in PFB
+        # Constraint: input timeseries only affords us ntaps * n_int ffts
         # of length nbins in our PFB.
-        n_int = len(self.gpu_iq_0) // self.n_taps // self.nbins
+        n_int = len(self.gpu_iq_0) // self.ntaps // self.nbins
         assert(n_int > 1), 'Assertion failed: there must be at least 1 window of '\
-                          +'length n_branches*n_taps in each input timestream.\n'\
+                          +'length n_branches*ntaps in each input timestream.\n'\
                           +'timestream len: {}\n'.format(len(self.gpu_iq_0))\
                           +'n_branches: {}\n'.format(self.nbins)\
-                          +'n_taps: {}\n'.format(self.n_taps)\
-                          +'n_branches*n_taps: {}'.format(self.nbins*self.n_taps)
+                          +'ntaps: {}\n'.format(self.ntaps)\
+                          +'n_branches*ntaps: {}'.format(self.nbins*self.ntaps)
         # Create window coefficients for spectrometer
-        self.window = (cusignal.get_window("hamming", self.n_taps * nbins)
-                     * cusignal.firwin(self.n_taps * self.nbins, cutoff=1.0/self.nbins, window='rectangular'))
+        self.window = (cusignal.get_window("hamming", self.ntaps * nbins)
+                     * cusignal.firwin(self.ntaps * self.nbins, cutoff=1.0/self.nbins, window='rectangular'))
 
         # ---------------------------------------------------------------------
         # SCIENCE DATA
@@ -195,6 +195,31 @@ class Correlator(object):
         self._frequency = value
         self.sdr0.fc = self._frequency
         self.sdr1.fc = self._frequency
+
+
+    @property
+    def num_samp(self):
+        '''The number of samples read for each SDR on each async call. Powers of 2 between 2^8 and 2^18 work.'''
+        return self._num_samp
+
+    @num_samp.setter
+    def num_samp(self, value):
+        int_val = int(round(value))
+        if int_val < 2**8:
+            value = 2**8
+        elif int_val > 2**18:
+            value = 2**18
+        self._num_samp = value
+
+
+    @property
+    def nbins(self):
+        '''The number of frequency bins for spectrometry. Use powers of 2 for optimal FFT performance.'''
+        return self._nbins
+
+    @nbins.setter
+    def nbins(self, value):
+        self._nbins = value
 
 
     @property
@@ -329,8 +354,8 @@ class Correlator(object):
         '''
         # Threading to take ffts using polyphase filterbank
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-            future_0 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_0), self.n_taps, self.nbins, self.window))
-            future_1 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_1), self.n_taps, self.nbins, self.window))
+            future_0 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window))
+            future_1 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window))
             try:
                 f0 = future_0.result()
                 f1 = future_1.result()
@@ -360,11 +385,11 @@ class Correlator(object):
         return vis
 
 
-    def spectrometer_poly(self, x, n_taps, n_branches, window): 
+    def spectrometer_poly(self, x, ntaps, n_branches, window): 
         '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
         input array x, channelized into n_branches coefficients
         :param x: cupy.array, signal of interest
-        :param n_taps: int, number of polyphase channelizer taps
+        :param ntaps: int, number of polyphase channelizer taps
         :param n_branches: int, number of polyphase channelizer branches
         :param window: cupy.array, window function coefficients
         :return: cupy.array, channelized
