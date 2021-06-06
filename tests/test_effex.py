@@ -69,8 +69,11 @@ class TestNominal(object):
         # generating a power spectrum are valid, by identifying a frequency
         # component of known value.
         iq = self.gen_complex_sinusoid(num_samp, rate, freq, noisy=False)
-    
-        spec = cor.spectrometer_poly(iq, taps, branches)
+
+        window = (cusignal.get_window("hamming", taps * branches)
+                * cusignal.firwin(taps * branches, cutoff=1.0/branches, window='rectangular'))    
+
+        spec = cor.spectrometer_poly(iq, taps, branches, window)
     
         psd = cp.real(spec * cp.conj(spec)).mean(axis=0)
     
@@ -136,7 +139,7 @@ class TestNominal(object):
     
     
     def test_nominal_state_transitions(self, cor):
-        nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'DRAIN', 'OFF')
+        nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'OFF')
         self.step_and_assert(cor, nom_sequence)
     
     
@@ -165,16 +168,6 @@ class TestNominal(object):
             cor.state = 'STARTUP'
             # already starting
             cor.state = 'STARTUP'
-        cor.state = 'OFF'
-        with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            # can't calibrate without running first
-            cor.state = 'CALIBRATE'
-        cor.state = 'OFF'
-        with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            # can't drain if not running
-            cor.state = 'DRAIN'
     
         # Starting in RUN
         cor.state = 'OFF'
@@ -206,26 +199,6 @@ class TestNominal(object):
             # already started
             cor.state = 'STARTUP'
     
-        # Starting in DRAIN
-        cor.state = 'OFF'
-        with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            cor.state = 'RUN'
-            cor.state = 'CALIBRATE'
-            cor.state = 'RUN'
-            cor.state = 'DRAIN'
-            # already draining
-            cor.state = 'DRAIN'
-        cor.state = 'OFF'
-        with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            cor.state = 'RUN'
-            cor.state = 'CALIBRATE'
-            cor.state = 'RUN'
-            cor.state = 'DRAIN'
-            # already started
-            cor.state = 'STARTUP'
-
 
 # ------------------------------------------------------------------------------
 # Off-nominal init tests

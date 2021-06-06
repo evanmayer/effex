@@ -26,7 +26,7 @@ class Correlator(object):
     # -------------------------------------------------------------------------
     # Class constants
     # -------------------------------------------------------------------------
-    _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'DRAIN')
+    _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE')
     _modes = ('SPECTRUM', 'CONTINUUM')
     # sized for 4GB RAM on NVIDIA Jetson Nano
     BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
@@ -81,6 +81,23 @@ class Correlator(object):
         self.gpu_iq_0 = cusignal.get_shared_mem(self.num_samp, dtype=np.complex128)
         self.gpu_iq_1 = cusignal.get_shared_mem(self.num_samp, dtype=np.complex128)
 
+        # ----------------------------------------------------------------------
+        # SPECTROMETER SETUP
+        # ----------------------------------------------------------------------
+        self.n_taps = 4 # Number of taps in PFB
+        # Constraint: input timeseries only affords us n_taps * n_int ffts
+        # of length nbins in our PFB.
+        n_int = len(self.gpu_iq_0) // self.n_taps // self.nbins
+        assert(n_int > 1), 'Assertion failed: there must be at least 1 window of '\
+                          +'length n_branches*n_taps in each input timestream.\n'\
+                          +'timestream len: {}\n'.format(len(self.gpu_iq_0))\
+                          +'n_branches: {}\n'.format(self.nbins)\
+                          +'n_taps: {}\n'.format(self.n_taps)\
+                          +'n_branches*n_taps: {}'.format(self.nbins*self.n_taps)
+        # Create window coefficients for spectrometer
+        self.window = (cusignal.get_window("hamming", self.n_taps * nbins)
+                     * cusignal.firwin(self.n_taps * self.nbins, cutoff=1.0/self.nbins, window='rectangular'))
+
         # ---------------------------------------------------------------------
         # SCIENCE DATA
         # --------------------------------------------------------------------
@@ -124,23 +141,19 @@ class Correlator(object):
             if 'OFF' == self.state and 'STARTUP' != input_state:
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'STARTUP' == self.state and input_state not in ('RUN', 'OFF'):
+            if 'STARTUP' == self.state and input_state not in ('CALIBRATE', 'RUN', 'OFF'):
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'RUN' == self.state and input_state not in ('CALIBRATE', 'DRAIN', 'OFF'):
+            if 'RUN' == self.state and input_state not in ('CALIBRATE', 'OFF'):
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'CALIBRATE' == self.state and input_state not in ('RUN', 'DRAIN', 'OFF'):
+            if 'CALIBRATE' == self.state and input_state not in ('RUN', 'OFF'):
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'DRAIN' == self.state and input_state not in ('RUN', 'CALIBRATE', 'OFF'):
-                self.close()
-                raise self.StateTransitionError(self.state, input_state)
-            # Bookkeeping
             self._state = input_state
         else:
             self.close()
-            raise ValueError(f'State {input_state} is not in known states: {self.states_}')
+            raise ValueError(f'State {input_state} is not in known states: {self._states}')
 
 
     @property
@@ -217,14 +230,13 @@ class Correlator(object):
         '''
         Main state machine.
         '''
-        first_pass = True
         while True:
             if 'OFF' == self.state:
                 self.state = 'STARTUP'
                 continue
             elif 'STARTUP' == self.state:
                 self.startup_task()
-                self.state = 'RUN'
+                self.state = 'CALIBRATE'
             # Should we be pulling data?
             elif self.state in ['CALIBRATE', 'RUN']:
                 if time.time() < self.start_time:
@@ -251,10 +263,6 @@ class Correlator(object):
                     # Complex chunks of IQ data vs. time go over to GPU
                     self.gpu_iq_0[:] = data_0
                     self.gpu_iq_1[:] = data_1
-
-                if first_pass:
-                    self.state = 'CALIBRATE'
-                    first_pass = False
             if 'CALIBRATE' == self.state:
                 self.calibrate_task()
                 # For now, calibration only consumes one pair of sample chunks
@@ -310,78 +318,24 @@ class Correlator(object):
         '''
         Use the data currently in the GPU memory to calculate the complex cross-correlation.
         '''
-        return self.pfb_xcorr(self.gpu_iq_0,
-                         self.gpu_iq_1,
-                         self.calibrated_delay,
-                         self.nbins,
-                         self.bandwidth,
-                         self.frequency,
-                         self.mode)
-
-
-    def spectrometer_poly(self, x, n_taps, n_branches): 
-        '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
-        input array x, channelized into n_branches coefficients
-    
-        :param x: cupy.array, signal of interest
-        :param n_taps: int, number of polyphase channelizer taps
-        :param n_branches: int, number of polyphase channelizer branches
-        :return: cupy.array, channelized
-        :rtype: cupy.array
-        '''
-        # Create window coefficients
-        w = cusignal.get_window("hamming", n_taps * n_branches)\
-          * cusignal.firwin(n_taps * n_branches, cutoff=1.0/n_branches, window='rectangular')
-    
-        # Pad the signal to an even number of chunks
-        x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
-    
-        channelized = cusignal.filtering.channelize_poly(x, w, n_branches).T
-    
-        return channelized
+        return self.pfb_xcorr()
     
     
-    def pfb_xcorr(self, gpu_iq_0, gpu_iq_1, total_delay, nfft, rate, fc, mode):
+    def pfb_xcorr(self):
         '''Consume buffer data to compute PSDs in pairs and then cross-
         correlate them. Use mapped, pinned memory space allocated on the GPU.
-        :param gpu_iq_0: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 0
-        :param gpu_iq_1: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 1
-        :param total_delay: float, time delay in sec between channels 0 and 1.
-        Calculated by sum of estimate_lag retvals.
-        :param nfft: int, number of fft bins to use in psd.
-        :param rate: float, SDR sample rate.
-        :param fc: float, SDR center tuning frequency
-        :param mode: str, either 'continuum' for recording visibility amplitudes
-        with time, or 'spectrum' for recording spectrum visibilities with time.
-        Defaults to 'continuum'.
         :return: the result of one complex cross-correlation of the input IQ data.
         :rtype: If mode == 'continuum', float. If mode =='spectrum', cupy.array.
         '''
-        n_branches = nfft # Number of 'branches', also fft length
-        n_taps = 4 # Number of taps in PFB
-        # Constraint: input timeseries only affords us n_taps * n_int ffts
-        # of length n_branches in our PFB.
-        n_int = len(gpu_iq_0) // n_taps // n_branches
-    
-        if (n_int < 1):
-            raise ValueError('Assertion failed: there must be at least 1 window of '
-                 +'length n_branches*n_taps in each input timestream.\n'
-                 +'timestream len: {}\n'.format(len(gpu_iq_0))
-                 +'n_branches: {}\n'.format(n_branches)
-                 +'n_taps: {}\n'.format(n_taps)
-                 +'n_branches*n_taps: {}'.format(n_branches*n_taps))
-        
         # Threading to take ffts using polyphase filterbank
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-            future_0 = iq_processor.submit(self.spectrometer_poly, *(cp.array(gpu_iq_0), n_taps, n_branches))
-            future_1 = iq_processor.submit(self.spectrometer_poly, *(cp.array(gpu_iq_1), n_taps, n_branches))
+            future_0 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_0), self.n_taps, self.nbins, self.window))
+            future_1 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_1), self.n_taps, self.nbins, self.window))
             try:
                 f0 = future_0.result()
                 f1 = future_1.result()
             except Exception as exc:
-                print('pfb_spectrometer call generated an exception: %s' % (exc))
+                print('pfb_spectrometer call generated an exception: {}'.format(exc))
                 raise exc
     
         # Apply phase gradient, inspired by 
@@ -391,19 +345,37 @@ class Correlator(object):
         # Correction
         f0 = cp.fft.fftshift(f0)
         f1 = cp.fft.fftshift(f1)
-        freqs = cp.fft.fftshift(cp.fft.fftfreq(f0.shape[-1], d=1/rate))
+        freqs = cp.fft.fftshift(cp.fft.fftfreq(f0.shape[-1], d=1/self.bandwidth))
     
         # Calculate cross-power spectrum and apply FSTC by a phase gradient
-        rot = cp.exp(-2j * cp.pi * freqs * (-total_delay))
+        rot = cp.exp(-2j * cp.pi * freqs * (-self.calibrated_delay))
         xpower_spec = f0 * cp.conj(f1 * rot)
         xpower_spec = xpower_spec.mean(axis=0) # time average
     
-        if 'continuum' == mode: # don't save spectral information
-            vis = cp.mean(xpower_spec) * rate # Total power est. from PSD, the visibility amplitude
+        if 'CONTINUUM' == self.mode: # don't save spectral information
+            vis = cp.mean(xpower_spec) * self.bandwidth # Total power est. from PSD, the visibility amplitude
         else:
             vis = xpower_spec
     
         return vis
+
+
+    def spectrometer_poly(self, x, n_taps, n_branches, window): 
+        '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
+        input array x, channelized into n_branches coefficients
+        :param x: cupy.array, signal of interest
+        :param n_taps: int, number of polyphase channelizer taps
+        :param n_branches: int, number of polyphase channelizer branches
+        :param window: cupy.array, window function coefficients
+        :return: cupy.array, channelized
+        :rtype: cupy.array
+        '''
+        # Pad the signal to an even number of chunks
+        x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
+    
+        channelized = cusignal.filtering.channelize_poly(x, window, n_branches).T
+    
+        return channelized
     
     
     def estimate_delay(self, iq_0, iq_1, rate, fc):
@@ -545,7 +517,7 @@ class Correlator(object):
                 if (time.time() - start_time > run_time):
                     break
         except Exception as exc:
-            print('streaming call generated an exception: %s' % (exc))
+            print('streaming() call generated an exception: {}'.format(exc))
             raise exc
         finally:
             await sdr.stop()

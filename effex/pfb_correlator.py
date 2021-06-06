@@ -54,6 +54,5 @@ if __name__ == "__main__":
                         mode=args.mode)
     cor.run_state_machine()
     cor.close()
-
     cor.post_process(cor.vis_out, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
 
