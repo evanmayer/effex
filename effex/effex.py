@@ -258,7 +258,6 @@ class Correlator(object):
         while True:
             if 'OFF' == self.state:
                 self.state = 'STARTUP'
-                continue
             elif 'STARTUP' == self.state:
                 self.startup_task()
                 self.state = 'CALIBRATE'
@@ -288,13 +287,14 @@ class Correlator(object):
                     # Complex chunks of IQ data vs. time go over to GPU
                     self.gpu_iq_0[:] = data_0
                     self.gpu_iq_1[:] = data_1
-            if 'CALIBRATE' == self.state:
-                self.calibrate_task()
-                # For now, calibration only consumes one pair of sample chunks
-                self.state = 'RUN'
-            elif 'RUN' == self.state:
-                visibility = self.run_task()
-                self.vis_out.append(visibility)
+
+                if 'CALIBRATE' == self.state:
+                    self.calibrate_task()
+                    # For now, calibration only consumes one pair of sample chunks
+                    self.state = 'RUN'
+                elif 'RUN' == self.state:
+                    visibility = self.run_task()
+                    self.vis_out.append(visibility)
 
 
     def startup_task(self):
