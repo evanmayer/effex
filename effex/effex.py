@@ -6,12 +6,16 @@ import numpy as np
 from scipy import optimize
 from scipy import stats
 import sys
+import threading
 import time
 
 import cupy as cp
 import cusignal
 
 from rtlsdr import RtlSdr
+
+
+LINESEP = '-' * 80
 
 
 class Correlator(object):
@@ -25,7 +29,7 @@ class Correlator(object):
     # -------------------------------------------------------------------------
     # Class constants
     # -------------------------------------------------------------------------
-    _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE')
+    _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'SHUTDOWN')
     _modes = ('SPECTRUM', 'CONTINUUM')
     # sized for 4GB RAM on NVIDIA Jetson Nano
     BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
@@ -99,10 +103,28 @@ class Correlator(object):
 
         # ---------------------------------------------------------------------
         # SCIENCE DATA
-        # --------------------------------------------------------------------
+        # ---------------------------------------------------------------------
         self.calibrated_delay = 0 # seconds
         # Store off cross-correlated chunks of IQ samples
         self.vis_out = []
+
+        # ---------------------------------------------------------------------
+        # USER INPUT
+        # ---------------------------------------------------------------------
+        # Thread for keyboard input
+        self.kbd_queue = multiprocessing.Queue(1)
+        self.input_thread = threading.Thread(target=self.get_kbd, args=(self.kbd_queue,), daemon=True)
+
+
+    def get_kbd(self, queue):
+        # Ends listening at end of scheduled run time
+        while time.time() < self.start_time + self.run_time:
+             
+             
+             
+             
+             
+             queue.put(sys.stdin.read(1))
 
 
     def close(self):
@@ -140,13 +162,16 @@ class Correlator(object):
             if 'OFF' == self.state and 'STARTUP' != input_state:
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'STARTUP' == self.state and input_state not in ('CALIBRATE', 'RUN', 'OFF'):
+            if 'STARTUP' == self.state and input_state not in ('CALIBRATE', 'RUN', 'SHUTDOWN'):
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'RUN' == self.state and input_state not in ('CALIBRATE', 'OFF'):
+            if 'RUN' == self.state and input_state not in ('CALIBRATE', 'SHUTDOWN'):
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
-            if 'CALIBRATE' == self.state and input_state not in ('RUN', 'OFF'):
+            if 'CALIBRATE' == self.state and input_state not in ('RUN', 'SHUTDOWN'):
+                self.close()
+                raise self.StateTransitionError(self.state, input_state)
+            if 'SHUTDOWN' == self.state and 'OFF' != input_state:
                 self.close()
                 raise self.StateTransitionError(self.state, input_state)
             self._state = input_state
@@ -255,6 +280,13 @@ class Correlator(object):
         Main state machine.
         '''
         while True:
+             # Check for user input
+            if not self.kbd_queue.empty():
+                kbd_in = self.kbd_queue.get_nowait()
+                if 'c' == kbd_in:
+                    print('Calibration requested. Entering calibration state...')
+                    self.state = 'CALIBRATE'
+
             if 'OFF' == self.state:
                 self.state = 'STARTUP'
             elif 'STARTUP' == self.state:
@@ -280,8 +312,7 @@ class Correlator(object):
                         continue
                     else:
                         print('IQ processing complete, buffers drained.')
-                        self.state = 'OFF'
-                        break
+                        self.state = 'SHUTDOWN'
                 else:
                     # Complex chunks of IQ data vs. time go over to GPU
                     self.gpu_iq_0[:] = data_0
@@ -294,6 +325,8 @@ class Correlator(object):
                 elif 'RUN' == self.state:
                     visibility = self.run_task()
                     self.vis_out.append(visibility)
+            elif 'SHUTDOWN' == self.state:
+                break
 
 
     def startup_task(self):
@@ -322,6 +355,13 @@ class Correlator(object):
         producer_1 = multiprocessing.Process(target=asyncio.run, args=(proc_1,))
         producer_0.start()
         producer_1.start()
+        # Begin listening for user input
+        self.input_thread.start()
+        print(LINESEP)
+        print('Listening for user input. Input a character & return:')
+        print(LINESEP)
+        print('c : request delay recalibration')
+        print(LINESEP)
 
 
     def calibrate_task(self):

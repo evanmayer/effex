@@ -139,22 +139,22 @@ class TestNominal(object):
     
     
     def test_nominal_state_transitions(self, cor):
-        nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'OFF')
+        nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, nom_sequence)
     
     
     def test_early_aborts(self, cor):
-        seq = ('STARTUP', 'OFF')
+        seq = ('STARTUP', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
-        seq = ('STARTUP', 'RUN', 'OFF')
+        seq = ('STARTUP', 'RUN', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
-        seq = ('STARTUP', 'RUN', 'CALIBRATE', 'OFF')
+        seq = ('STARTUP', 'RUN', 'CALIBRATE', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
-        seq = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'OFF')
+        seq = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
     
     
-    def test_bad_state_transitions(self, cor):
+    def test_bad_transition_from_OFF(self, cor):
         # Starting in OFF
         with pytest.raises(fx.Correlator.StateTransitionError):
             # already off
@@ -162,42 +162,45 @@ class TestNominal(object):
         with pytest.raises(fx.Correlator.StateTransitionError):
             # can't run without starting up first
             cor.state = 'RUN'
-    
+
+
+    def test_bad_transition_from_STARTUP(self, cor):
         # Starting in STARTUP
         with pytest.raises(fx.Correlator.StateTransitionError):
             cor.state = 'STARTUP'
             # already starting
             cor.state = 'STARTUP'
-    
-        # Starting in RUN
+        cor.state = 'SHUTDOWN'
         cor.state = 'OFF'
+
+
+    def test_bad_transition_from_RUN(self, cor):
+        # Starting in RUN
         with pytest.raises(fx.Correlator.StateTransitionError):
             cor.state = 'STARTUP'
             cor.state = 'RUN'
             # already running
             cor.state = 'RUN'
-        cor.state = 'OFF'
         with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            cor.state = 'RUN'
             # already started
             cor.state = 'STARTUP'
-    
-        # Starting in CALIBRATE
+        cor.state = 'SHUTDOWN'
         cor.state = 'OFF'
+
+
+    def test_bad_transition_from_CALIBRATE(self, cor):
+        # Starting in CALIBRATE
         with pytest.raises(fx.Correlator.StateTransitionError):
             cor.state = 'STARTUP'
             cor.state = 'RUN'
             cor.state = 'CALIBRATE'
             # already calibrating
             cor.state = 'CALIBRATE'
-        cor.state = 'OFF'
         with pytest.raises(fx.Correlator.StateTransitionError):
-            cor.state = 'STARTUP'
-            cor.state = 'RUN'
-            cor.state = 'CALIBRATE'
             # already started
             cor.state = 'STARTUP'
+        cor.state = 'SHUTDOWN'
+        cor.state = 'OFF'
     
 
 # ------------------------------------------------------------------------------
