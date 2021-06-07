@@ -119,11 +119,6 @@ class Correlator(object):
     def get_kbd(self, queue):
         # Ends listening at end of scheduled run time
         while time.time() < self.start_time + self.run_time:
-             
-             
-             
-             
-             
              queue.put(sys.stdin.read(1))
 
 
@@ -643,7 +638,7 @@ class Correlator(object):
             real_part = cp.asnumpy(cp.real(visibilities))
             imag_part = cp.asnumpy(cp.imag(visibilities))
             
-            if 'continuum' == mode:
+            if 'CONTINUUM' == mode:
                 sharey = 'none'
             else:
                 sharey = 'all'
@@ -651,7 +646,7 @@ class Correlator(object):
             fig, axes = plt.subplots(nrows=2, ncols=2, sharex='all', sharey=sharey)
             fig.tight_layout()
                                                                                               
-            if 'continuum' == mode:
+            if 'CONTINUUM' == mode:
                 #ECM: TODO: delay-space sweep not implemented in production for now
                 sweep_step = False
                 # Convert x axis from SDR samples to time delay
