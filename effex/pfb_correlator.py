@@ -38,7 +38,7 @@ if __name__ == "__main__":
         help='(int) Number of FFT bins to use in processing and plotting.')
     parser.add_argument('--gain',       '-G', default=49.6, type=float, dest='gain',
         help='(dB) Tuner gain in Decibels. Tuner gain has an impact on receiver sensitivity and may affect clock stability due to heat generation. Applied to both channels.')
-    parser.add_argument('--mode',       '-M', default='spectrum', type=str, choices=['continuum', 'spectrum'], dest='mode', 
+    parser.add_argument('--mode',       '-M', default='spectrum', type=str, choices=['continuum', 'spectrum', 'test'], dest='mode', 
         help='(str) Choose one: continuum mode estimates visibility amplitude over time, throwing away phase and frequency information. Spectrum mode keeps complex visibilities. Affects data memory usage, visualization speed, and output file size.')
     parser.add_argument('--omit_plot',  '-P', default=False, type=bool, dest='omit_plot', 
         help='If True, skip post-processing step using matplotlib to visualize recorded data. This may help avoid memory usage problems on low-memory systems. Raw data will still be recorded to a file for further post-processing.')

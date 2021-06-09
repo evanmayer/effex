@@ -20,17 +20,17 @@ LINESEP = '-' * 80
 
 class Correlator(object):
     '''
-    This FX correlator streams IQ data synchronously from 2 SDRs
-    to 2 deque circular buffers.
-    The GPU is kept fed by popping sample chunks off of 
-    the deque, performing polyphase filter-bank preprocessing.
+    This FX correlator streams IQ data synchronously from 2 SDRs to 2 deque
+    circular buffers.
+    The GPU is kept fed by popping sample chunks off of the deques, performing
+    polyphase filter-bank preprocessing.
     Then the two streams are combined by cross-correlation.
     '''
     # -------------------------------------------------------------------------
     # Class constants
     # -------------------------------------------------------------------------
     _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'SHUTDOWN')
-    _modes = ('SPECTRUM', 'CONTINUUM')
+    _modes = ('SPECTRUM', 'CONTINUUM', 'TEST')
     # sized for 4GB RAM on NVIDIA Jetson Nano
     BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
     # allow some time for streaming subprocesses to get to starting line
@@ -115,8 +115,23 @@ class Correlator(object):
         self.kbd_queue = multiprocessing.Queue(1)
         self.input_thread = threading.Thread(target=self.get_kbd, args=(self.kbd_queue,), daemon=True)
 
+        # ---------------------------------------------------------------------
+        # TEST MODE PARAMS
+        # ---------------------------------------------------------------------
+        # In test mode, the delay between the channels is calibrated out, and
+        # then an artifical sweep in delay-space begins.
+        # To goal is to reproduce the fringe pattern of an interferometer,
+        # a sinusoid of period 1/fc modulated by something resembling a
+        # sinc function, having first nulls at ~+/-1/bandwidth.
+        crit_delay = 1 / self.frequency
+        # Step through delay space with balance between sampling fidelity and
+        # sweep speed:
+        self.test_delay_sweep_step = crit_delay / 10
+        self.test_delay_offset = self.test_delay_sweep_step * 200
+
 
     def get_kbd(self, queue):
+        '''Helper function to run in a separate thread and add user input chars to a buffer.'''
         # Ends listening at end of scheduled run time
         while time.time() < self.start_time + self.run_time:
              queue.put(sys.stdin.read(1))
@@ -275,7 +290,7 @@ class Correlator(object):
         Main state machine.
         '''
         while True:
-             # Check for user input
+            # Check for user input
             if not self.kbd_queue.empty():
                 kbd_in = self.kbd_queue.get_nowait()
                 if 'c' == kbd_in:
@@ -318,6 +333,8 @@ class Correlator(object):
                     # For now, calibration only consumes one pair of sample chunks
                     self.state = 'RUN'
                 elif 'RUN' == self.state:
+                    if 'TEST' == self.mode:
+                        self.calibrated_delay += self.test_delay_sweep_step
                     visibility = self.run_task()
                     self.vis_out.append(visibility)
             elif 'SHUTDOWN' == self.state:
@@ -402,17 +419,15 @@ class Correlator(object):
         # implemented according to Thompson, Moran, Swenson's Interferometry and 
         # Synthesis in Radio Astronoy, 3rd ed., p.364: Fractional Sample Delay 
         # Correction
-        f0 = cp.fft.fftshift(f0)
-        f1 = cp.fft.fftshift(f1)
-        freqs = cp.fft.fftshift(cp.fft.fftfreq(f0.shape[-1], d=1/self.bandwidth))
+        freqs = cp.fft.fftfreq(f0.shape[-1], d=1/self.bandwidth) + self.frequency
     
         # Calculate cross-power spectrum and apply FSTC by a phase gradient
         rot = cp.exp(-2j * cp.pi * freqs * (-self.calibrated_delay))
         xpower_spec = f0 * cp.conj(f1 * rot)
-        xpower_spec = xpower_spec.mean(axis=0) # time average
+        xpower_spec = cp.fft.fftshift(xpower_spec.mean(axis=0))
     
-        if 'CONTINUUM' == self.mode: # don't save spectral information
-            vis = cp.mean(xpower_spec) * self.bandwidth # Total power est. from PSD, the visibility amplitude
+        if self.mode in ['CONTINUUM', 'TEST']: # don't save spectral information
+            vis = xpower_spec.mean(axis=0) / self.bandwidth # a visibility amplitude estimate
         else:
             vis = xpower_spec
     
@@ -451,7 +466,9 @@ class Correlator(object):
         integer_delay = self.estimate_integer_delay(iq_0, iq_1, rate)
         frac_delay = self.estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
         total_delay = integer_delay + frac_delay
-    
+
+        if 'TEST' == self.mode:
+            total_delay -= self.test_delay_offset
         return total_delay
     
     
@@ -505,9 +522,9 @@ class Correlator(object):
         :rtype: float
         '''
         N = 8192
-        f0 = cp.fft.fftshift(cp.fft.fft(cp.array(iq_0), n=N))
-        f1 = cp.fft.fftshift(cp.fft.fft(cp.array(iq_1), n=N))
-        freqs = cp.fft.fftshift(cp.fft.fftfreq(N, d=1/rate)) + fc
+        f0 = cp.fft.fft(cp.array(iq_0), n=N)
+        f1 = cp.fft.fft(cp.array(iq_1), n=N)
+        freqs = cp.fft.fftfreq(N, d=1/rate) + fc
     
         # Yes, there is a double negative, for mathematical clarity. Most eqns
         # have -i, and we are "undoing" the delay, so -delay.
@@ -613,7 +630,7 @@ class Correlator(object):
             '''
             fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
             
-            if 'continuum' == mode: # Continuum mode, don't save spectral information
+            if mode in ['continuum', 'test']: # Continuum mode, don't save spectral information
                 visibilities = visibilities.flatten()
                 with open(fname, 'a') as f:
                     np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
@@ -626,7 +643,7 @@ class Correlator(object):
             return fname
     
     
-        def visualize(visibilities, rate, fc, nfft, num_samp, mode):
+        def visualize(visibilities, rate, fc, nfft, num_samp, mode, test_delay_sweep_step=0):
             '''Handles plotting 1D continuum data or 2D spectrum data with respect to time.
             :param visibilites: ndim cupy array, output of correlator function pfb_xcorr
             :param mode: str, either 'continuum' for recording visibility amplitudes
@@ -638,7 +655,7 @@ class Correlator(object):
             real_part = cp.asnumpy(cp.real(visibilities))
             imag_part = cp.asnumpy(cp.imag(visibilities))
             
-            if 'continuum' == mode:
+            if mode in ['continuum', 'test']:
                 sharey = 'none'
             else:
                 sharey = 'all'
@@ -646,14 +663,11 @@ class Correlator(object):
             fig, axes = plt.subplots(nrows=2, ncols=2, sharex='all', sharey=sharey)
             fig.tight_layout()
                                                                                               
-            if 'continuum' == mode:
-                #ECM: TODO: delay-space sweep not implemented in production for now
-                sweep_step = False
+            if mode in ['continuum', 'test']:
                 # Convert x axis from SDR samples to time delay
-                samples = np.arange(0, len(amp))                                    
-                if sweep_step:
-                    samples_to_ns = sweep_step / rate / 1e-9
-                    delay_ns = samples * samples_to_ns
+                samples = np.arange(0, len(amp))
+                if test_delay_sweep_step:
+                    delay_ns = samples * test_delay_sweep_step * 1e9
                     x = delay_ns
                     xlabel = 'Delay (ns)'
                 else:
@@ -722,6 +736,11 @@ class Correlator(object):
         print('Data recorded to {}.'.format(fname))
     
         if not omit_plot:
-            visualize(visibilities, rate, fc, nfft, num_samp, mode)
+            if 'TEST' == self.mode:
+                test_delay_sweep_step = self.test_delay_sweep_step
+            else:
+                test_delay_sweep_step = 0
+
+            visualize(visibilities, rate, fc, nfft, num_samp, mode, test_delay_sweep_step=test_delay_sweep_step)
 
 
