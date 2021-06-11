@@ -3,24 +3,10 @@ Driver program to provide CLI and start up an FX correlator.
 '''
 
 import argparse
-import asyncio
-import multiprocessing
-import numpy as np
-import sys
-import time
-
-from rtlsdr import RtlSdr
-
 import effex as fx
 
 
 if __name__ == "__main__":
-    # -------------------------------------------------------------------------
-    # CONSTANTS 
-    # -------------------------------------------------------------------------
-    d_len = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2) # sized for 4GB RAM on NVIDIA Jetson Nano
-    streaming_fudge_factor = 1. # sec, allow some time for streaming subprocesses to get to starting line
-
     # -------------------------------------------------------------------------
     # ARGUMENT PARSING
     # -------------------------------------------------------------------------
@@ -42,6 +28,8 @@ if __name__ == "__main__":
         help='(str) Choose one: continuum mode estimates visibility amplitude over time, throwing away phase and frequency information. Spectrum mode keeps complex visibilities. Affects data memory usage, visualization speed, and output file size.')
     parser.add_argument('--omit_plot',  '-P', default=False, type=bool, dest='omit_plot', 
         help='If True, skip post-processing step using matplotlib to visualize recorded data. This may help avoid memory usage problems on low-memory systems. Raw data will still be recorded to a file for further post-processing.')
+    parser.add_argument('--loglevel', '-L', default='INFO', type=str, choices=['INFO', 'WARNING', 'DEBUG', 'ERROR', 'CRITICAL'], dest='loglevel',
+        help='Python logging module loglevel.')
 
     args = parser.parse_args()
 
@@ -51,7 +39,8 @@ if __name__ == "__main__":
                         num_samp=args.num_samp,
                         nbins=args.nfft,
                         gain=args.gain,
-                        mode=args.mode)
+                        mode=args.mode,
+                        loglevel=args.loglevel)
     cor.run_state_machine()
     cor.close()
     cor.post_process(cor.vis_out, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)

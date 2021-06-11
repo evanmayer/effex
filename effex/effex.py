@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import logging
 import matplotlib.pyplot as plt
 import multiprocessing
 import numpy as np
@@ -46,7 +47,29 @@ class Correlator(object):
                  num_samp=2**18,
                  nbins=2**12,
                  gain=49.6,
-                 mode='SPECTRUM'):
+                 mode='SPECTRUM',
+                 loglevel='INFO'):
+
+        # ---------------------------------------------------------------------
+        # LOGGING
+        # ---------------------------------------------------------------------
+        level = getattr(logging, loglevel)
+        # Set up out logger:
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(level)
+        # create file handler which logs even debug messages
+        fh = logging.FileHandler('effex.log')
+        fh.setLevel(level)
+        # create console handler with a higher log level
+        ch = logging.StreamHandler()
+        ch.setLevel(level)
+        # create formatter and add it to the handlers
+        formatter = logging.Formatter('{asctime} - {name} - {levelname:<8} - {message}', style='{')
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+        # add the handlers to the logger
+        self.logger.addHandler(fh)
+        self.logger.addHandler(ch)
 
         # ---------------------------------------------------------------------
         # SDR INIT
@@ -140,7 +163,7 @@ class Correlator(object):
     def close(self):
         self.sdr0.close()
         self.sdr1.close()
-        print('SDRs closed.')
+        self.logger.info('SDRs closed.')
 
 
     # -------------------------------------------------------------------------
@@ -167,6 +190,7 @@ class Correlator(object):
     @state.setter
     def state(self, input_state):
         '''This state setter is used post-init to handle state transitions. State always starts out OFF.'''
+        self.logger.debug(f'State transition: {self._state} to {input_state}')
         if input_state in self._states:
             # State transition checking
             if 'OFF' == self.state and 'STARTUP' != input_state:
@@ -213,7 +237,7 @@ class Correlator(object):
     def bandwidth(self, value):
         threshold = 2.8e6
         if value > threshold:
-            print(f'WARNING: bandwidth value {value} is greater than {threshold}, and RtlSdrs may not be stable.')
+            self.logger.warning(f'Bandwidth value {value} is greater than {threshold}, and RtlSdrs may not be stable.')
         self._bandwidth = value
         self.sdr0.rs = self._bandwidth
         self.sdr1.rs = self._bandwidth
@@ -294,7 +318,7 @@ class Correlator(object):
             if not self.kbd_queue.empty():
                 kbd_in = self.kbd_queue.get_nowait()
                 if 'c' == kbd_in:
-                    print('Calibration requested. Entering calibration state...')
+                    self.logger.info('Calibration requested.')
                     self.state = 'CALIBRATE'
 
             if 'OFF' == self.state:
@@ -311,17 +335,20 @@ class Correlator(object):
                 try: 
                     data_0 = self.buf0.get(block=True, timeout=1)
                 except:
+                    self.logger.debug('Buffer 0 empty')
                     buf0_empty = True
                 try: 
                     data_1 = self.buf1.get(block=True, timeout=1)
                 except:
+                    self.logger.debug('Buffer 1 empty')
                     buf1_empty = True
                 # Is it time to stop?
                 if (buf0_empty and buf1_empty):
                     if time.time() - self.start_time < self.run_time:
+                        self.logger.debug('Both buffers empty, waiting')
                         continue
                     else:
-                        print('IQ processing complete, buffers drained.')
+                        self.logger.info('IQ processing complete, buffers drained. Shutting down.')
                         self.state = 'SHUTDOWN'
                 else:
                     # Complex chunks of IQ data vs. time go over to GPU
@@ -346,13 +373,14 @@ class Correlator(object):
         Initialize sub-processes to start async streaming from SDRs to sample chunk buffers.
         '''
         self.start_time = time.time() + Correlator.STARTUP_DURATION
-        print('Cross-correlation begins at {}'.format(
+        self.logger.info('Cross-correlation will begin at {}'.format(
             time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(self.start_time))))
         # IQ source processes
         # ECM: FIXME:
         # streaming() is an async function, so this will throw a warning about 
         # not awaiting it, but of course it's being run by asyncio.run, just not
         # here. There might be another way to do this, but this works for now.
+        self.logger.debug('Starting streaming subprocesses')
         proc_0 = self.streaming(self.sdr0,
                                 self.buf0,
                                 self.num_samp,
@@ -383,11 +411,12 @@ class Correlator(object):
         # Calibration assumes a noise source w/flat PSD in-band is 
         # used as input
         # Estimate integer and fractional sample delays
+        self.logger.debug('Starting calibration')
         self.calibrated_delay = self.estimate_delay(self.gpu_iq_0,
                                                     self.gpu_iq_1,
                                                     self.bandwidth,
                                                     self.frequency)
-        print('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
+        self.logger.info('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
        
 
     def run_task(self):
@@ -501,7 +530,7 @@ class Correlator(object):
     
         integer_lag = n - int(cp.argmax(cp.abs(xcorr)))
         integer_delay = integer_lag / rate
-    
+
         return integer_delay
     
     
@@ -566,8 +595,8 @@ class Correlator(object):
             ax.set_ylabel('Phase (rad)')
             ax.legend(loc='best', framealpha=0.4)
             fig.show()
-            print('WARNING: 1st-pass delay calibration failed: '
-                + 'fractional sample time correction, |{}| > 1/sample rate, {} '.format(frac_delay, 1/rate))
+            self.logger.warning('1st-pass delay calibration failed: fractional'
+                + ' sample time correction, |{}| > 1/sample rate, {} '.format(frac_delay, 1/rate))
     
         return frac_delay
     
@@ -598,7 +627,7 @@ class Correlator(object):
         finally:
             await sdr.stop()
                                                                                                                    
-        print('Buffering ended at {}'.format(
+        self.logger.info('Buffering ended at {}'.format(
             time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(time.time()))))
     
     
@@ -629,6 +658,7 @@ class Correlator(object):
             :rtype: str
             '''
             fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
+            self.logger.info('Saving data to {}.'.format(fname))
             
             if mode in ['continuum', 'test']: # Continuum mode, don't save spectral information
                 visibilities = visibilities.flatten()
@@ -639,6 +669,8 @@ class Correlator(object):
                 with open(fname, 'ab') as f:
                     np.savetxt(f, [freqs], delimiter=',')
                     np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
+
+            self.logger.info('Save complete.')
     
             return fname
     
@@ -650,6 +682,8 @@ class Correlator(object):
             with time, or 'spectrum' for recording spectrum visibilities with time.
             Defaults to 'continuum'.
             '''
+            self.logger.info('Plotting data...')
+
             amp = cp.asnumpy(cp.sqrt(cp.real(visibilities * cp.conj(visibilities))))
             phase = cp.asnumpy(cp.angle(visibilities))
             real_part = cp.asnumpy(cp.real(visibilities))
@@ -726,14 +760,16 @@ class Correlator(object):
                 fig.colorbar(im10, ax=axes[1][0])
                 fig.colorbar(im11, ax=axes[1][1])
                                                                                               
+            self.logger.info('Plotting complete.')
+
             plt.show()
+
             return
     
         # Convert list to cupy array
         visibilities = cp.array(raw_output)
     
         fname = record_visibilities(visibilities, fc, mode)
-        print('Data recorded to {}.'.format(fname))
     
         if not omit_plot:
             if 'TEST' == self.mode:
