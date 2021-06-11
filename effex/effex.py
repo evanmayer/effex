@@ -57,10 +57,8 @@ class Correlator(object):
         # Set up out logger:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(level)
-        # create file handler which logs even debug messages
         fh = logging.FileHandler('effex.log')
         fh.setLevel(level)
-        # create console handler with a higher log level
         ch = logging.StreamHandler()
         ch.setLevel(level)
         # create formatter and add it to the handlers
