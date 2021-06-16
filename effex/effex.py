@@ -32,10 +32,11 @@ class Correlator(object):
     # -------------------------------------------------------------------------
     _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'SHUTDOWN')
     _modes = ('SPECTRUM', 'CONTINUUM', 'TEST')
-    # sized for 4GB RAM on NVIDIA Jetson Nano
-    BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
-    # allow some time for streaming subprocesses to get to starting line
-    STARTUP_DURATION = 1. # sec
+
+    _BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
+    '''sized to easily fit several large of np.complex128 arrays in the 4GB RAM on an NVIDIA Jetson Nano'''
+    _STARTUP_DURATION = 1. # sec
+    '''allow some time for _streaming subprocesses to get to starting line'''
 
     # -------------------------------------------------------------------------
     # Init and destruct
@@ -53,21 +54,21 @@ class Correlator(object):
         # ---------------------------------------------------------------------
         # LOGGING
         # ---------------------------------------------------------------------
-        level = getattr(logging, loglevel)
-        # Set up out logger:
+        _level = getattr(logging, loglevel)
+        # Set up our logger:
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(level)
-        fh = logging.FileHandler('effex.log')
-        fh.setLevel(level)
-        ch = logging.StreamHandler()
-        ch.setLevel(level)
+        self.logger.setLevel(_level)
+        _fh = logging.FileHandler('effex.log')
+        _fh.setLevel(_level)
+        _ch = logging.StreamHandler()
+        _ch.setLevel(_level)
         # create formatter and add it to the handlers
-        formatter = logging.Formatter('{asctime} - {name} - {levelname:<8} - {message}', style='{')
-        fh.setFormatter(formatter)
-        ch.setFormatter(formatter)
+        _formatter = logging.Formatter('{asctime} - {name} - {levelname:<8} - {message}', style='{')
+        _fh.setFormatter(_formatter)
+        _ch.setFormatter(_formatter)
         # add the handlers to the logger
-        self.logger.addHandler(fh)
-        self.logger.addHandler(ch)
+        self.logger.addHandler(_fh)
+        self.logger.addHandler(_ch)
 
         # ---------------------------------------------------------------------
         # SDR INIT
@@ -98,8 +99,8 @@ class Correlator(object):
         # CPU & GPU MEMORY SETUP
         # ----------------------------------------------------------------------
         # Store sample chunks in 2 deques
-        self.buf0 = multiprocessing.Queue(Correlator.BUFFER_SIZE)
-        self.buf1 = multiprocessing.Queue(Correlator.BUFFER_SIZE)
+        self.buf0 = multiprocessing.Queue(Correlator._BUFFER_SIZE)
+        self.buf1 = multiprocessing.Queue(Correlator._BUFFER_SIZE)
 
         # Create mapped, pinned memory for zero copy between CPU and GPU
         self.gpu_iq_0 = cusignal.get_shared_mem(self.num_samp, dtype=np.complex128)
@@ -134,7 +135,7 @@ class Correlator(object):
         # ---------------------------------------------------------------------
         # Thread for keyboard input
         self.kbd_queue = multiprocessing.Queue(1)
-        self.input_thread = threading.Thread(target=self.get_kbd, args=(self.kbd_queue,), daemon=True)
+        self.input_thread = threading.Thread(target=self._get_kbd, args=(self.kbd_queue,), daemon=True)
 
         # ---------------------------------------------------------------------
         # TEST MODE PARAMS
@@ -151,14 +152,15 @@ class Correlator(object):
         self.test_delay_offset = self.test_delay_sweep_step * 200
 
 
-    def get_kbd(self, queue):
-        '''Helper function to run in a separate thread and add user input chars to a buffer.'''
+    def _get_kbd(self, queue):
+        # Helper function to run in a separate thread and add user input chars to a buffer.
         # Ends listening at end of scheduled run time
         while time.time() < self.start_time + self.run_time:
              queue.put(sys.stdin.read(1))
 
 
     def close(self):
+        '''Function run upon shutdown to release the program's lock on the SDR instances.'''
         self.sdr0.close()
         self.sdr1.close()
         self.logger.info('SDRs closed.')
@@ -309,7 +311,7 @@ class Correlator(object):
     # --------------------------------------------------------------------------
     def run_state_machine(self):
         '''
-        Main state machine.
+        Start the state machine handling running, calibration, and shutdown.
         '''
         while True:
             # Check for user input
@@ -322,7 +324,7 @@ class Correlator(object):
             if 'OFF' == self.state:
                 self.state = 'STARTUP'
             elif 'STARTUP' == self.state:
-                self.startup_task()
+                self._startup_task()
                 self.state = 'CALIBRATE'
             # Should we be pulling data?
             elif self.state in ['CALIBRATE', 'RUN']:
@@ -354,38 +356,38 @@ class Correlator(object):
                     self.gpu_iq_1[:] = data_1
 
                 if 'CALIBRATE' == self.state:
-                    self.calibrate_task()
+                    self._calibrate_task()
                     # For now, calibration only consumes one pair of sample chunks
                     self.state = 'RUN'
                 elif 'RUN' == self.state:
                     if 'TEST' == self.mode:
                         self.calibrated_delay += self.test_delay_sweep_step
-                    visibility = self.run_task()
+                    visibility = self._run_task()
                     self.vis_out.append(visibility)
             elif 'SHUTDOWN' == self.state:
                 break
 
 
-    def startup_task(self):
+    def _startup_task(self):
         '''
         Initialize sub-processes to start async streaming from SDRs to sample chunk buffers.
         '''
-        self.start_time = time.time() + Correlator.STARTUP_DURATION
+        self.start_time = time.time() + Correlator._STARTUP_DURATION
         self.logger.info('Cross-correlation will begin at {}'.format(
             time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(self.start_time))))
         # IQ source processes
         # ECM: FIXME:
-        # streaming() is an async function, so this will throw a warning about 
+        # _streaming() is an async function, so this will throw a warning about 
         # not awaiting it, but of course it's being run by asyncio.run, just not
         # here. There might be another way to do this, but this works for now.
         self.logger.debug('Starting streaming subprocesses')
-        proc_0 = self.streaming(self.sdr0,
+        proc_0 = self._streaming(self.sdr0,
                                 self.buf0,
                                 self.num_samp,
                                 self.start_time,
                                 self.run_time)
         producer_0 = multiprocessing.Process(target=asyncio.run, args=(proc_0,))
-        proc_1 = self.streaming(self.sdr1,
+        proc_1 = self._streaming(self.sdr1,
                                 self.buf1,
                                 self.num_samp,
                                 self.start_time,
@@ -402,7 +404,7 @@ class Correlator(object):
         print(LINESEP)
 
 
-    def calibrate_task(self):
+    def _calibrate_task(self):
         '''
         Use the data currently in the GPU memory to estimate and store the time delay between channels.
         '''
@@ -410,30 +412,34 @@ class Correlator(object):
         # used as input
         # Estimate integer and fractional sample delays
         self.logger.debug('Starting calibration')
-        self.calibrated_delay = self.estimate_delay(self.gpu_iq_0,
+        self.calibrated_delay = self._estimate_delay(self.gpu_iq_0,
                                                     self.gpu_iq_1,
                                                     self.bandwidth,
                                                     self.frequency)
         self.logger.info('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
        
 
-    def run_task(self):
+    def _run_task(self):
         '''
         Use the data currently in the GPU memory to calculate the complex cross-correlation.
         '''
-        return self.pfb_xcorr()
+        return self._pfb_xcorr()
     
     
-    def pfb_xcorr(self):
-        '''Consume buffer data to compute PSDs in pairs and then cross-
+    def _pfb_xcorr(self):
+        '''
+        Consume buffer data to compute PSDs in pairs and then cross-
         correlate them. Use mapped, pinned memory space allocated on the GPU.
-        :return: the result of one complex cross-correlation of the input IQ data.
-        :rtype: If mode == 'continuum', float. If mode =='spectrum', cupy.array.
+
+        Returns
+        -------
+        vis :  If mode == 'continuum', float. If mode =='spectrum', cupy.array.
+            The result of one complex cross-correlation of the input IQ data.
         '''
         # Threading to take ffts using polyphase filterbank
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-            future_0 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window))
-            future_1 = iq_processor.submit(self.spectrometer_poly, *(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window))
+            future_0 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window))
+            future_1 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window))
             try:
                 f0 = future_0.result()
                 f1 = future_1.result()
@@ -461,15 +467,25 @@ class Correlator(object):
         return vis
 
 
-    def spectrometer_poly(self, x, ntaps, n_branches, window): 
-        '''Polyphase channelize input data using cuSignal polyphase channelizer. Returns
+    def _spectrometer_poly(self, x, ntaps, n_branches, window): 
+        '''
+        Polyphase channelize input data using cuSignal polyphase channelizer. Returns
         input array x, channelized into n_branches coefficients
-        :param x: cupy.array, signal of interest
-        :param ntaps: int, number of polyphase channelizer taps
-        :param n_branches: int, number of polyphase channelizer branches
-        :param window: cupy.array, window function coefficients
-        :return: cupy.array, channelized
-        :rtype: cupy.array
+
+        Parameters
+        ----------
+        x : cupy.array
+            signal of interest
+        ntaps : int
+            number of polyphase channelizer taps
+        n_branches : int
+            number of polyphase channelizer branches
+        window : cupy.array
+            window function coefficients
+
+        Returns
+        -------
+        channelized : cupy.array
         '''
         # Pad the signal to an even number of chunks
         x = cp.zeros(len(x)+len(x)%n_branches, dtype=np.complex128)[:len(x)] + x
@@ -479,19 +495,29 @@ class Correlator(object):
         return channelized
     
     
-    def estimate_delay(self, iq_0, iq_1, rate, fc):
-        '''Returns delay estimate between channels in seconds.
-        :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 0
-        :param iq_1: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 1
-        :param rate: float, SDR sample rate.
-        :param fc: float, SDR center tuning frequency
-        :return: float, the delay estimate between channels in seconds
-        :rtype: tuple
+    def _estimate_delay(self, iq_0, iq_1, rate, fc):
         '''
-        integer_delay = self.estimate_integer_delay(iq_0, iq_1, rate)
-        frac_delay = self.estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
+        Returns delay estimate between channels in seconds.
+
+        Parameters
+        ----------
+        iq_0, iq_1 : cusignal mapped, pinned array
+            GPU memory containing SDR IQ data from channels
+        rate : float
+            SDR sample rate, samples per second
+        fc : float
+            SDR center tuning frequency, Hz
+
+                                                                             
+        Returns
+        -------
+        total_delay : float
+            The delay estimate between channels in seconds
+        '''
+
+
+        integer_delay = self._estimate_integer_delay(iq_0, iq_1, rate)
+        frac_delay = self._estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
         total_delay = integer_delay + frac_delay
 
         if 'TEST' == self.mode:
@@ -499,15 +525,22 @@ class Correlator(object):
         return total_delay
     
     
-    def estimate_integer_delay(self, iq_0, iq_1, rate):
-        '''Returns delay estimate between channels to the nearest sample division.
-        :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 0
-        :param iq_1: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 1
-        :param rate: float, SDR sample rate.
-        :return: float, the delay estimate between channels in seconds
-        :rtype: int
+    def _estimate_integer_delay(self, iq_0, iq_1, rate):
+        '''
+        Returns delay estimate between channels to the nearest sample division.
+
+        Parameters
+        ----------
+        iq_0, iq_1 : cusignal mapped, pinned array
+            GPU memory containing SDR IQ data from channels
+        rate : float
+            SDR sample rate, samples per second
+
+        Returns
+        -------
+        integer_delay : float
+            The delay estimate between channels in seconds due to an integer
+            number of samples
         '''
         # TODO: lift constraint on equal-length timeseries
         assert len(iq_0) == len(iq_1), ('Algorithm assumes input complex timeseries'
@@ -532,21 +565,28 @@ class Correlator(object):
         return integer_delay
     
     
-    def estimate_fractional_delay(self, iq_0, iq_1, integer_delay, rate, fc):
-        '''Returns fractional sampling time correction between channels in seconds.
+    def _estimate_fractional_delay(self, iq_0, iq_1, integer_delay, rate, fc):
+        '''
+        Returns fractional sampling time correction between channels in seconds.
         First corrects integer sample lag to make estimating the fractional lag
         tractable, then finds the slope of the phase of the cross-correlation by
         linear regression to estimate the fractional sample delay.
-        :param iq_0: cusignal mapped, pinned array of GPU memory containing SDR
-        data from channel 0
-        :param iq_1: cusignal mapped, pinned array of GPU memory containing
-        SDR data from channel 1
-        :param integer_delay: int, estimated value from estimate_integer_delay()
-        :param rate: float, SDR sample rate.
-        :param fc: float, SDR center tuning frequency
-        :return: float, frac_delay, the fractional lag between the argument signals
-        in seconds
-        :rtype: float
+
+        Parameters
+        ----------
+        iq_0, iq_1 : cusignal mapped, pinned array
+            GPU memory containing SDR IQ data from channels
+        integer_delay : int
+            estimated value from _estimate_integer_delay(), sec
+        rate : float
+            SDR sample rate, samples per second
+        fc : float
+            SDR center tuning frequency, Hz
+
+        Returns
+        -------
+        frac_delay, float
+            The fractional lag between the argument signals in seconds
         '''
         N = 8192
         f0 = cp.fft.fft(cp.array(iq_0), n=N)
@@ -599,18 +639,24 @@ class Correlator(object):
         return frac_delay
     
     
-    async def streaming(self, sdr, buf, num_samp, start_time, run_time):
+    async def _streaming(self, sdr, buf, num_samp, start_time, run_time):
         '''Begins streaming sample chunks from a pyrtlsdr RtlSdr() instance to a
         multiprocess.Queue() buffer at a given time and stops at a given later time.
-        :param sdr: RtlSdr() instance. Should already be initialized/tuned to the
-        frequency of interest.
-        :param buf: multiprocessing.Queue() instance, buffer to put sample np.arrays in
-        :param num_samp: int, number of samples to read async from sdr at a time.
-        2^18 works well for RTL-SDRblog v3 dongles.
-        :param start_time: float, time in ms since UNIX epoch to begin streaming
-        async samples. Helps multiple streaming processes start closer to the same time.
-        :param run_time: float, time in ms since UNIX epoch to end streaming async
-        samples.
+        
+        Parameters
+        ----------
+        sdr : RtlSdr() instance
+            Should already be initialized/tuned to the frequency of interest.
+        buf : multiprocessing.Queue() instance
+            Buffer to put sample np.arrays in
+        num_samp : int
+            Number of samples to read async from sdr at a time. 2^18 works well
+            for RTL-SDRblog v3 dongles.
+        start_time: float
+            Time in ms since UNIX epoch to begin streaming async samples. Helps
+            multiple streaming processes start closer to the same time.
+        run_time: float
+            Time in ms since UNIX epoch to end streaming async samples.
         '''
         while time.time() < start_time:
             await asyncio.sleep(1e-9)
@@ -620,7 +666,7 @@ class Correlator(object):
                 if (time.time() - start_time > run_time):
                     break
         except Exception as exc:
-            print('streaming() call generated an exception: {}'.format(exc))
+            print('_streaming() call generated an exception: {}'.format(exc))
             raise exc
         finally:
             await sdr.stop()
@@ -630,31 +676,36 @@ class Correlator(object):
     
     
     def post_process(self, raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
-        '''Handles saving and displaying data.
-        :param raw_output: python list, if mode 'continuum', a list of visibility
-        amplitudes, if mode 'spectrum', a list of cupy arrays, each
-        one being a complex visibility spectrum from a pair of SDR
-        buffer reads
-        :param rate: float, SDR sample rate.
-        :param fc: float, SDR center tuning frequency
-        :param nfft: int, number of fft bins to use in psd.
-        :param num_samp: int, number of samples to read async from sdr at a time.
-        :param mode: str, either 'continuum' for recording visibility amplitudes
-        with time, or 'spectrum' for recording spectrum visibilities with time.
-        Defaults to 'continuum'.
-        :param omit_plot: bool, if True, don't plot recorded data with matplotlib.
-        :return: fname, the filename to which output processed data is written
-        :rtype: str
         '''
-        def record_visibilities(visibilities, fc, mode):
-            '''
-            :param visibilites: ndim cupy array
-            :param mode: str, either 'continuum' for recording visibility amplitudes
-            with time, or 'spectrum' for recording spectrum visibilities with time.
+        Handles saving and displaying data.
+
+        Parameters
+        ----------
+        raw_output : list
+            If mode 'continuum', a list of complex floats. If mode 'spectrum',
+            a list of cupy arrays, each one being a complex visibility
+            spectrum from a pair of SDR buffer reads
+        rate : float
+            SDR sample rate, samples per second.
+        fc : float
+            SDR center tuning frequency, Hz
+        nfft : int
+            Number of fft bins to use in frequency axis.
+        mode : str
+            Either 'continuum' for recording visibility amplitudes with time,
+            or 'spectrum' for recording spectrum visibilities with time.
             Defaults to 'continuum'.
-            :return: str, fname, filename that was written to
-            :rtype: str
-            '''
+        omit_plot : bool
+            If True, don't plot recorded data with matplotlib.
+
+        Returns
+        -------
+        fname : str
+            The filename to which output processed data is written.
+        '''
+        def _record_visibilities(visibilities, fc, mode):
+            '''Helper function to write data raw to a file.'''
+
             fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
             self.logger.info('Saving data to {}.'.format(fname))
             
@@ -673,13 +724,10 @@ class Correlator(object):
             return fname
     
     
-        def visualize(visibilities, rate, fc, nfft, num_samp, mode, test_delay_sweep_step=0):
-            '''Handles plotting 1D continuum data or 2D spectrum data with respect to time.
-            :param visibilites: ndim cupy array, output of correlator function pfb_xcorr
-            :param mode: str, either 'continuum' for recording visibility amplitudes
-            with time, or 'spectrum' for recording spectrum visibilities with time.
-            Defaults to 'continuum'.
-            '''
+        def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
+            '''Helper that handles plotting 1D continuum data or 2D spectrum
+            data with respect to time.'''
+
             self.logger.info('Plotting data...')
 
             amp = cp.asnumpy(cp.sqrt(cp.real(visibilities * cp.conj(visibilities))))
@@ -775,6 +823,6 @@ class Correlator(object):
             else:
                 test_delay_sweep_step = 0
 
-            visualize(visibilities, rate, fc, nfft, num_samp, mode, test_delay_sweep_step=test_delay_sweep_step)
+            visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
 
 

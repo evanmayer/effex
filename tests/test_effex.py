@@ -73,7 +73,7 @@ class TestNominal(object):
         window = (cusignal.get_window("hamming", taps * branches)
                 * cusignal.firwin(taps * branches, cutoff=1.0/branches, window='rectangular'))    
 
-        spec = cor.spectrometer_poly(iq, taps, branches, window)
+        spec = cor._spectrometer_poly(iq, taps, branches, window)
     
         psd = cp.real(spec * cp.conj(spec)).mean(axis=0)
     
@@ -99,7 +99,7 @@ class TestNominal(object):
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
     
-        est_delay = cor.estimate_integer_delay(iq_0, iq_1, rate)
+        est_delay = cor._estimate_integer_delay(iq_0, iq_1, rate)
         est_delay_samples = est_delay * rate
     
         assert(abs(samp_offset_int - est_delay_samples) < 1e-9)
