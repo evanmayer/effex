@@ -703,7 +703,7 @@ class Correlator(object):
         fname : str
             The filename to which output processed data is written.
         '''
-        def _record_visibilities(visibilities, fc, mode):
+        def record_visibilities(visibilities, fc, mode):
             '''Helper function to write data raw to a file.'''
 
             fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
