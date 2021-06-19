@@ -5,7 +5,7 @@ effex is a software-defined [correlator](https://astronomy.swin.edu.au/cosmos/C/
 The library is written in Python and is driven by a command line application:
 
 ```bash
-python pfb_correlator.py --time 60 --bandwidth 2.4e6 --frequency 1.4204e9 --num_samp 262144 --resolution 4096 --gain 49.6 --mode spectrum
+python effex.py --time 60 --bandwidth 2.4e6 --frequency 1.4204e9 --num_samp 262144 --resolution 4096 --gain 29.7 --mode spectrum --loglevel=INFO
 ```
 
 which generates output data that is automatically plotted as
