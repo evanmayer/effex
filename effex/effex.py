@@ -59,7 +59,7 @@ class Correlator(object):
         # Set up our logger:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(_level)
-        _fh = logging.FileHandler('effex.log')
+        _fh = logging.FileHandler('log_effex.log')
         _fh.setLevel(_level)
         _ch = logging.StreamHandler()
         _ch.setLevel(_level)
@@ -99,7 +99,7 @@ class Correlator(object):
         # ----------------------------------------------------------------------
         # CPU & GPU MEMORY SETUP
         # ----------------------------------------------------------------------
-        # Store sample chunks in 2 deques
+        # Store sample chunks in 2 queues
         self.buf0 = multiprocessing.Queue(Correlator._BUFFER_SIZE)
         self.buf1 = multiprocessing.Queue(Correlator._BUFFER_SIZE)
 
@@ -114,9 +114,9 @@ class Correlator(object):
         # Constraint: input timeseries only affords us ntaps * n_int ffts
         # of length nbins in our PFB.
         n_int = len(self.gpu_iq_0) // self.ntaps // self.nbins
-        assert(n_int > 1), 'Assertion failed: there must be at least 1 window of '\
-                          +'length n_branches*ntaps in each input timestream.\n'\
-                          +'timestream len: {}\n'.format(len(self.gpu_iq_0))\
+        assert(n_int >= 1), 'Assertion failed: there must be at least 1 window of '\
+                          +'length n_branches*ntaps in each input timeseries.\n'\
+                          +'timeseries len: {}\n'.format(len(self.gpu_iq_0))\
                           +'n_branches: {}\n'.format(self.nbins)\
                           +'ntaps: {}\n'.format(self.ntaps)\
                           +'n_branches*ntaps: {}'.format(self.nbins*self.ntaps)
@@ -129,7 +129,11 @@ class Correlator(object):
         # ---------------------------------------------------------------------
         self.calibrated_delay = 0 # seconds
         # Store off cross-correlated chunks of IQ samples
-        self.vis_out = []
+        self.vis_out = multiprocessing.Queue()
+        # A file to archive data
+        self.output_file = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'
+        # A thread to handle buffering data to file
+        self.output_thread = None # Will be assigned once a file handle is available
 
         # ---------------------------------------------------------------------
         # USER INPUT
@@ -156,7 +160,7 @@ class Correlator(object):
     def _get_kbd(self, queue):
         # Helper function to run in a separate thread and add user input chars to a buffer.
         # Ends listening at end of scheduled run time
-        while time.time() < self.start_time + self.run_time:
+        while self.state in ['RUN', 'CALIBRATE']:
              queue.put(sys.stdin.read(1))
 
 
@@ -314,65 +318,88 @@ class Correlator(object):
         '''
         Start the state machine handling running, calibration, and shutdown.
         '''
-        while True:
-            # Check for user input
-            if not self.kbd_queue.empty():
-                kbd_in = self.kbd_queue.get_nowait()
-                if 'c' == kbd_in:
-                    self.logger.info('Calibration requested.')
+        with open(self.output_file, 'a') as file_handle:
+            # Assign the file handle to the output buffering thread
+            self.output_thread = threading.Thread(target=self._write_data,
+                args=(file_handle,),
+                daemon=True
+            )
+            while True:
+                # Check for user input
+                if not self.kbd_queue.empty():
+                    kbd_in = self.kbd_queue.get_nowait()
+                    if 'c' == kbd_in:
+                        self.logger.info('Calibration requested.')
+                        self.state = 'CALIBRATE'
+
+                if self.buf0.qsize() == Correlator._BUFFER_SIZE:
+                    self.logger.warning('SDR buffer 0 filled up. Data may have been lost!')
+                if self.buf1.qsize() == Correlator._BUFFER_SIZE:
+                    self.logger.warning('SDR buffer  filled up. Data may have been lost!')
+
+                if 'OFF' == self.state:
+                    self.state = 'STARTUP'
+                elif 'STARTUP' == self.state:
+                    self._startup_task()
                     self.state = 'CALIBRATE'
-
-            if 'OFF' == self.state:
-                self.state = 'STARTUP'
-            elif 'STARTUP' == self.state:
-                self._startup_task()
-                self.state = 'CALIBRATE'
-            # Should we be pulling data?
-            elif self.state in ['CALIBRATE', 'RUN']:
-                if time.time() < self.start_time:
-                    continue
-                buf0_empty = False
-                buf1_empty = False
-                try: 
-                    data_0 = self.buf0.get(block=True, timeout=1)
-                except:
-                    self.logger.debug('Buffer 0 empty')
-                    buf0_empty = True
-                try: 
-                    data_1 = self.buf1.get(block=True, timeout=1)
-                except:
-                    self.logger.debug('Buffer 1 empty')
-                    buf1_empty = True
-                # Is it time to stop?
-                if (buf0_empty and buf1_empty):
-                    if time.time() - self.start_time < self.run_time:
-                        self.logger.debug('Both buffers empty, waiting')
+                # Should we be pulling data?
+                elif self.state in ['CALIBRATE', 'RUN']:
+                    if time.time() < self.start_time:
                         continue
-                    else:
-                        self.logger.info('IQ processing complete, buffers drained. Shutting down.')
-                        self.state = 'SHUTDOWN'
-                else:
-                    # Complex chunks of IQ data vs. time go over to GPU
-                    self.gpu_iq_0[:] = data_0
-                    self.gpu_iq_1[:] = data_1
 
-                if 'CALIBRATE' == self.state:
-                    self._calibrate_task()
-                    # For now, calibration only consumes one pair of sample chunks
-                    self.state = 'RUN'
-                elif 'RUN' == self.state:
-                    if 'TEST' == self.mode:
-                        self.calibrated_delay += self.test_delay_sweep_step
-                    visibility = self._run_task()
-                    self.vis_out.append(visibility)
-            elif 'SHUTDOWN' == self.state:
-                break
+                    buf0_empty = False
+                    buf1_empty = False
+                    try: 
+                        data_0 = self.buf0.get(block=True, timeout=1)
+                    except:
+                        self.logger.debug('Buffer 0 empty')
+                        buf0_empty = True
+                    try: 
+                        data_1 = self.buf1.get(block=True, timeout=1)
+                    except:
+                        self.logger.debug('Buffer 1 empty')
+                        buf1_empty = True
+                    # Is it time to stop?
+                    if (buf0_empty and buf1_empty):
+                        if time.time() - self.start_time < self.run_time:
+                            self.logger.debug('Both buffers empty, waiting')
+                            continue
+                        else:
+                            # Wait for output buffer to drain
+                            if self.vis_out.empty():
+                                self.logger.info('IQ processing complete, buffers drained. Shutting down.')
+                                self.state = 'SHUTDOWN'
+                            else:
+                                self.logger.debug('Time up, but waiting for output buffer to drain.')
+                    else:
+                        # Complex chunks of IQ data vs. time go over to GPU
+                        self.gpu_iq_0[:] = data_0
+                        self.gpu_iq_1[:] = data_1
+    
+                    if 'CALIBRATE' == self.state:
+                        self._calibrate_task()
+                        # For now, calibration only consumes one pair of sample chunks
+                        self.state = 'RUN'
+                    elif 'RUN' == self.state:
+                        if 'TEST' == self.mode:
+                            self.calibrated_delay += self.test_delay_sweep_step
+                        visibility = self._run_task()
+                        # send cross-correlated data to output buffer
+                        self.vis_out.put(visibility)
+                elif 'SHUTDOWN' == self.state:
+                        break
+
+                self.logger.debug('SDR buffer 0 size: {}'.format(self.buf0.qsize()))
+                self.logger.debug('SDR buffer 1 size: {}'.format(self.buf1.qsize()))
+                self.logger.debug('Correlation buffer size: {}'.format(self.vis_out.qsize()))
 
 
     def _startup_task(self):
         '''
         Initialize sub-processes to start async streaming from SDRs to sample chunk buffers.
         '''
+        self._write_metadata()
+
         self.start_time = time.time() + Correlator._STARTUP_DURATION
         self.logger.info('Cross-correlation will begin at {}'.format(
             time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(self.start_time))))
@@ -383,21 +410,25 @@ class Correlator(object):
         # here. There might be another way to do this, but this works for now.
         self.logger.debug('Starting streaming subprocesses')
         proc_0 = self._streaming(self.sdr0,
-                                self.buf0,
-                                self.num_samp,
-                                self.start_time,
-                                self.run_time)
+                                 self.buf0,
+                                 self.num_samp,
+                                 self.start_time,
+                                 self.run_time)
         producer_0 = multiprocessing.Process(target=asyncio.run, args=(proc_0,))
         proc_1 = self._streaming(self.sdr1,
-                                self.buf1,
-                                self.num_samp,
-                                self.start_time,
-                                self.run_time)
+                                 self.buf1,
+                                 self.num_samp,
+                                 self.start_time,
+                                 self.run_time)
         producer_1 = multiprocessing.Process(target=asyncio.run, args=(proc_1,))
         producer_0.start()
         producer_1.start()
-        # Begin listening for user input
+
+        self.output_thread.start()
+        self.logger.debug('Starting output buffering thread.')
+
         self.input_thread.start()
+        self.logger.debug('Starting to listen for keyboard input.')
         print(LINESEP)
         print('Listening for user input. Input a character & return:')
         print(LINESEP)
@@ -674,18 +705,51 @@ class Correlator(object):
                                                                                                                    
         self.logger.info('Buffering ended at {}'.format(
             time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(time.time()))))
-    
-    
+
+
+    def _write_metadata(self):
+        self.logger.info('Data will be saved to {}.'.format(self.output_file))
+
+        with open(self.output_file, 'w') as file_handle:
+            file_handle.write((f'run_time : {self.run_time}, '
+                              +f'bandwidth : {self.bandwidth}, '
+                              +f'frequency : {self.frequency}, '
+                              +f'num_samp : {self.num_samp}, '
+                              +f'resolution : {self.nbins}, '
+                              +f'gain : {self.gain}, '
+                              +f'mode : {self.mode}\n'))
+            if 'SPECTRUM' == self.mode:
+                # Label frequency bins
+                freqs = np.fft.fftshift(np.fft.fftfreq(self.nbins, d=1/self.bandwidth)) + self.frequency
+                np.savetxt(file_handle, [freqs], delimiter=',')
+            else:
+                np.savetxt(file_handle, [])
+
+
+    def _write_data(self, file_handle):
+        '''Buffer cross-correlations to file.'''
+        while self.state in ['STARTUP', 'RUN', 'CALIBRATE']:
+            while not self.vis_out.empty():
+                data = self.vis_out.get_nowait()
+                try: # handle case where file gets closed unexpectedly
+                    np.savetxt(file_handle, [cp.asnumpy(data)], delimiter=',')
+                except ValueError:
+                    self.logger.warning('Attempted write to {} after file handle closed.'.format(file_handle))
+            # We must balance this thread's need to write to file against the
+            # need to perform the cross-correlation task.
+            time.sleep(1.0) 
+
+
     def post_process(self, raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
         '''
         Handles saving and displaying data.
 
         Parameters
         ----------
-        raw_output : list
-            If mode 'continuum', a list of complex floats. If mode 'spectrum',
-            a list of cupy arrays, each one being a complex visibility
-            spectrum from a pair of SDR buffer reads
+        raw_output : np.array
+            If mode 'continuum', a 1d array of complex floats. If mode 'spectrum',
+            a 2d array, each row being a complex visibility spectrum from a
+            pair of SDR buffer reads
         rate : float
             SDR sample rate, samples per second.
         fc : float
@@ -704,37 +768,16 @@ class Correlator(object):
         fname : str
             The filename to which output processed data is written.
         '''
-        def record_visibilities(visibilities, fc, mode):
-            '''Helper function to write data raw to a file.'''
-
-            fname = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'             
-            self.logger.info('Saving data to {}.'.format(fname))
-            
-            if mode in ['continuum', 'test']: # Continuum mode, don't save spectral information
-                visibilities = visibilities.flatten()
-                with open(fname, 'a') as f:
-                    np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
-            else:
-                freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
-                with open(fname, 'ab') as f:
-                    np.savetxt(f, [freqs], delimiter=',')
-                    np.savetxt(f, cp.asnumpy(visibilities), delimiter=',')
-
-            self.logger.info('Save complete.')
-    
-            return fname
-    
-    
         def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
             '''Helper that handles plotting 1D continuum data or 2D spectrum
             data with respect to time.'''
 
             self.logger.info('Plotting data...')
 
-            amp = cp.asnumpy(cp.sqrt(cp.real(visibilities * cp.conj(visibilities))))
-            phase = cp.asnumpy(cp.angle(visibilities))
-            real_part = cp.asnumpy(cp.real(visibilities))
-            imag_part = cp.asnumpy(cp.imag(visibilities))
+            amp = np.sqrt(np.real(visibilities * np.conj(visibilities)))
+            phase = np.angle(visibilities)
+            real_part = np.real(visibilities)
+            imag_part = np.imag(visibilities)
             
             if mode in ['continuum', 'test']:
                 sharey = 'none'
@@ -813,18 +856,13 @@ class Correlator(object):
 
             return
     
-        # Convert list to cupy array
-        visibilities = cp.array(raw_output)
-    
-        fname = record_visibilities(visibilities, fc, mode)
-    
         if not omit_plot:
             if 'TEST' == self.mode:
                 test_delay_sweep_step = self.test_delay_sweep_step
             else:
                 test_delay_sweep_step = 0
 
-            visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
+            visualize(raw_output, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
 
 
 if __name__ == "__main__":
@@ -912,5 +950,12 @@ if __name__ == "__main__":
                      loglevel=args.loglevel)
     cor.run_state_machine()
     cor.close()
-    cor.post_process(cor.vis_out, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
+
+    # Plot results from file
+    if args.mode in ['continuum', 'test']:
+        skiprows = 1
+    else:
+        skiprows = 2
+    output = np.loadtxt(cor.output_file, dtype=np.complex128, delimiter=',', skiprows=skiprows)
+    cor.post_process(output, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
 
