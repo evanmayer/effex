@@ -335,7 +335,7 @@ class Correlator(object):
                 if self.buf0.qsize() == Correlator._BUFFER_SIZE:
                     self.logger.warning('SDR buffer 0 filled up. Data may have been lost!')
                 if self.buf1.qsize() == Correlator._BUFFER_SIZE:
-                    self.logger.warning('SDR buffer  filled up. Data may have been lost!')
+                    self.logger.warning('SDR buffer 1 filled up. Data may have been lost!')
 
                 if 'OFF' == self.state:
                     self.state = 'STARTUP'
