@@ -5,11 +5,13 @@ import logging
 import matplotlib.pyplot as plt
 import multiprocessing
 import numpy as np
+from queue import Empty, Full
 from scipy import optimize
 from scipy import stats
 import sys
 import threading
 import time
+import traceback
 
 import cupy as cp
 import cusignal
@@ -70,6 +72,8 @@ class Correlator(object):
         # add the handlers to the logger
         self.logger.addHandler(_fh)
         self.logger.addHandler(_ch)
+        # Threadsafe queue for child threads to report exceptions
+        self.exc_queue = multiprocessing.Queue()
 
         # ---------------------------------------------------------------------
         # SDR INIT
@@ -132,15 +136,12 @@ class Correlator(object):
         self.vis_out = multiprocessing.Queue()
         # A file to archive data
         self.output_file = time.strftime('visibilities_%Y%m%d-%H%M%S')+'.csv'
-        # A thread to handle buffering data to file
-        self.output_thread = None # Will be assigned once a file handle is available
 
         # ---------------------------------------------------------------------
         # USER INPUT
         # ---------------------------------------------------------------------
         # Thread for keyboard input
         self.kbd_queue = multiprocessing.Queue(1)
-        self.input_thread = threading.Thread(target=self._get_kbd, args=(self.kbd_queue,), daemon=True)
 
         # ---------------------------------------------------------------------
         # TEST MODE PARAMS
@@ -162,6 +163,17 @@ class Correlator(object):
         # Ends listening at end of scheduled run time
         while self.state in ['RUN', 'CALIBRATE']:
              queue.put(sys.stdin.read(1))
+
+
+    def _child_threw_exception(self):
+        # Helper to give max possible info about child exceptions and trigger
+        # a shutdown if necessary.
+        child_threw = False
+        if not self.exc_queue.empty():
+            exc_formatted = self.exc_queue.get_nowait()
+            self.logger.error('Parent process caught child exception:\n{}'.format(exc_formatted))
+            child_threw = True
+        return child_threw
 
 
     def close(self):
@@ -318,80 +330,80 @@ class Correlator(object):
         '''
         Start the state machine handling running, calibration, and shutdown.
         '''
-        with open(self.output_file, 'a') as file_handle:
-            # Assign the file handle to the output buffering thread
-            self.output_thread = threading.Thread(target=self._write_data,
-                args=(file_handle,),
-                daemon=True
-            )
-            while True:
-                # Check for user input
-                if not self.kbd_queue.empty():
-                    kbd_in = self.kbd_queue.get_nowait()
-                    if 'c' == kbd_in:
-                        self.logger.info('Calibration requested.')
-                        self.state = 'CALIBRATE'
-
-                if self.buf0.qsize() == Correlator._BUFFER_SIZE:
-                    self.logger.warning('SDR buffer 0 filled up. Data may have been lost!')
-                if self.buf1.qsize() == Correlator._BUFFER_SIZE:
-                    self.logger.warning('SDR buffer 1 filled up. Data may have been lost!')
-
-                if 'OFF' == self.state:
-                    self.state = 'STARTUP'
-                elif 'STARTUP' == self.state:
-                    self._startup_task()
+        while True:
+            # Check for user input
+            if not self.kbd_queue.empty():
+                kbd_in = self.kbd_queue.get_nowait()
+                if 'c' == kbd_in:
+                    self.logger.info('Calibration requested.')
                     self.state = 'CALIBRATE'
-                # Should we be pulling data?
-                elif self.state in ['CALIBRATE', 'RUN']:
-                    if time.time() < self.start_time:
+
+            # Warn if buffers fill up, but timeout does not occur
+            if self.buf0.qsize() == Correlator._BUFFER_SIZE:
+                self.logger.warning('SDR buffer 0 filled up. Data may have been lost!')
+            if self.buf1.qsize() == Correlator._BUFFER_SIZE:
+                self.logger.warning('SDR buffer 1 filled up. Data may have been lost!')
+
+            # Begin state machine
+            if self._child_threw_exception():
+                self.logger.debug('Shutting down because child threw exception.')
+                self.state = 'SHUTDOWN'
+
+            if 'OFF' == self.state:
+                self.state = 'STARTUP'
+            elif 'STARTUP' == self.state:
+                self._startup_task()
+                self.state = 'CALIBRATE'
+            # Should we be pulling data?
+            elif self.state in ['CALIBRATE', 'RUN']:
+                if time.time() < self.start_time:
+                    continue
+                # Check for data available
+                buf0_empty = False
+                buf1_empty = False
+                try:
+                    data_0 = self.buf0.get(block=True, timeout=1)
+                except Empty:
+                    self.logger.debug('Buffer 0 empty')
+                    buf0_empty = True
+                try:
+                    data_1 = self.buf1.get(block=True, timeout=1)
+                except Empty:
+                    self.logger.debug('Buffer 1 empty')
+                    buf1_empty = True
+                # Is it time to stop?
+                if (buf0_empty and buf1_empty):
+                    if time.time() - self.start_time < self.run_time:
+                        self.logger.debug('Both buffers empty, waiting')
                         continue
-
-                    buf0_empty = False
-                    buf1_empty = False
-                    try: 
-                        data_0 = self.buf0.get(block=True, timeout=1)
-                    except:
-                        self.logger.debug('Buffer 0 empty')
-                        buf0_empty = True
-                    try: 
-                        data_1 = self.buf1.get(block=True, timeout=1)
-                    except:
-                        self.logger.debug('Buffer 1 empty')
-                        buf1_empty = True
-                    # Is it time to stop?
-                    if (buf0_empty and buf1_empty):
-                        if time.time() - self.start_time < self.run_time:
-                            self.logger.debug('Both buffers empty, waiting')
-                            continue
-                        else:
-                            # Wait for output buffer to drain
-                            if self.vis_out.empty():
-                                self.logger.info('IQ processing complete, buffers drained. Shutting down.')
-                                self.state = 'SHUTDOWN'
-                            else:
-                                self.logger.debug('Time up, but waiting for output buffer to drain.')
                     else:
-                        # Complex chunks of IQ data vs. time go over to GPU
-                        self.gpu_iq_0[:] = data_0
-                        self.gpu_iq_1[:] = data_1
+                        # Wait for output buffer to drain
+                        if self.vis_out.empty():
+                            self.logger.info('IQ processing complete, buffers drained. Shutting down.')
+                            self.state = 'SHUTDOWN'
+                        else:
+                            self.logger.debug('Time up, but waiting for output buffer to drain.')
+                else:
+                    # Complex chunks of IQ data vs. time go over to GPU
+                    self.gpu_iq_0[:] = data_0
+                    self.gpu_iq_1[:] = data_1
     
-                    if 'CALIBRATE' == self.state:
-                        self._calibrate_task()
-                        # For now, calibration only consumes one pair of sample chunks
-                        self.state = 'RUN'
-                    elif 'RUN' == self.state:
-                        if 'TEST' == self.mode:
-                            self.calibrated_delay += self.test_delay_sweep_step
-                        visibility = self._run_task()
-                        # send cross-correlated data to output buffer
-                        self.vis_out.put(visibility)
-                elif 'SHUTDOWN' == self.state:
-                        break
+                if 'CALIBRATE' == self.state:
+                    self._calibrate_task()
+                    self.state = 'RUN'
+                elif 'RUN' == self.state:
+                    if 'TEST' == self.mode:
+                        self.calibrated_delay += self.test_delay_sweep_step
+                    visibility = self._run_task()
+                    # send cross-correlated data to output buffer
+                    self.vis_out.put(visibility)
+            elif 'SHUTDOWN' == self.state:
+                self.close()
+                break
 
-                self.logger.debug('SDR buffer 0 size: {}'.format(self.buf0.qsize()))
-                self.logger.debug('SDR buffer 1 size: {}'.format(self.buf1.qsize()))
-                self.logger.debug('Correlation buffer size: {}'.format(self.vis_out.qsize()))
+            self.logger.debug('SDR buffer 0 size: {}'.format(self.buf0.qsize()))
+            self.logger.debug('SDR buffer 1 size: {}'.format(self.buf1.qsize()))
+            self.logger.debug('Correlation buffer size: {}'.format(self.vis_out.qsize()))
 
 
     def _startup_task(self):
@@ -402,32 +414,46 @@ class Correlator(object):
 
         self.start_time = time.time() + Correlator._STARTUP_DURATION
         self.logger.info('Cross-correlation will begin at {}'.format(
-            time.strftime('%a, %d %b %Y %H:%M:%S', time.localtime(self.start_time))))
+            time.strftime('%a, %d %b %Y %H:%M:%S',
+                time.localtime(self.start_time))
+            )
+        )
         # IQ source processes
         # ECM: FIXME:
         # _streaming() is an async function, so this will throw a warning about 
         # not awaiting it, but of course it's being run by asyncio.run, just not
         # here. There might be another way to do this, but this works for now.
         self.logger.debug('Starting streaming subprocesses')
-        proc_0 = self._streaming(self.sdr0,
-                                 self.buf0,
-                                 self.num_samp,
-                                 self.start_time,
-                                 self.run_time)
-        producer_0 = multiprocessing.Process(target=asyncio.run, args=(proc_0,))
-        proc_1 = self._streaming(self.sdr1,
-                                 self.buf1,
-                                 self.num_samp,
-                                 self.start_time,
-                                 self.run_time)
-        producer_1 = multiprocessing.Process(target=asyncio.run, args=(proc_1,))
-        producer_0.start()
-        producer_1.start()
+        proc0 = self._streaming(self.sdr0,
+            self.buf0,
+            self.num_samp,
+            self.start_time,
+            self.run_time
+        )
+        producer0 = multiprocessing.Process(target=asyncio.run, args=(proc0,))
+        proc1 = self._streaming(self.sdr1,
+            self.buf1,
+            self.num_samp,
+            self.start_time,
+            self.run_time
+        )
+        producer1 = multiprocessing.Process(target=asyncio.run, args=(proc1,))
+        producer0.daemon = True
+        producer1.daemon = True
+        producer0.start()
+        producer1.start()
 
-        self.output_thread.start()
+        output_thread = threading.Thread(target=self._write_data,
+            daemon=True
+        )
+        output_thread.start()
         self.logger.debug('Starting output buffering thread.')
 
-        self.input_thread.start()
+        input_thread = threading.Thread(target=self._get_kbd,
+            args=(self.kbd_queue,),
+            daemon=True
+        )
+        input_thread.start()
         self.logger.debug('Starting to listen for keyboard input.')
         print(LINESEP)
         print('Listening for user input. Input a character & return:')
@@ -472,12 +498,8 @@ class Correlator(object):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
             future_0 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window))
             future_1 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window))
-            try:
-                f0 = future_0.result()
-                f1 = future_1.result()
-            except Exception as exc:
-                print('pfb_spectrometer call generated an exception: {}'.format(exc))
-                raise exc
+            f0 = future_0.result()
+            f1 = future_1.result()
     
         # Apply phase gradient, inspired by 
         # http://www.gmrt.ncra.tifr.res.in/doc/WEBLF/LFRA/node70.html
@@ -694,12 +716,13 @@ class Correlator(object):
             await asyncio.sleep(1e-9)
         try: 
             async for samples in sdr.stream(format='samples', num_samples_or_bytes=num_samp):
-                buf.put(samples)
+                buf.put(samples, timeout=30)
                 if (time.time() - start_time > run_time):
                     break
-        except Exception as exc:
-            print('_streaming() call generated an exception: {}'.format(exc))
-            raise exc
+        except Full as e:
+            self.logger.exception('_streaming() call filled up a buffer, and it was not emptied before timeout occurred.', exc_info=sys.exc_info())
+            self.exc_queue.put(traceback.format_exc())
+            raise e
         finally:
             await sdr.stop()
                                                                                                                    
@@ -708,6 +731,7 @@ class Correlator(object):
 
 
     def _write_metadata(self):
+        '''Write file header.'''
         self.logger.info('Data will be saved to {}.'.format(self.output_file))
 
         with open(self.output_file, 'w') as file_handle:
@@ -726,18 +750,16 @@ class Correlator(object):
                 np.savetxt(file_handle, [])
 
 
-    def _write_data(self, file_handle):
+    def _write_data(self):
         '''Buffer cross-correlations to file.'''
-        while self.state in ['STARTUP', 'RUN', 'CALIBRATE']:
-            while not self.vis_out.empty():
-                data = self.vis_out.get_nowait()
-                try: # handle case where file gets closed unexpectedly
+        with open(self.output_file, 'a') as file_handle:
+            while self.state in ['STARTUP', 'RUN', 'CALIBRATE']:
+                while not self.vis_out.empty():
+                    data = self.vis_out.get_nowait()
                     np.savetxt(file_handle, [cp.asnumpy(data)], delimiter=',')
-                except ValueError:
-                    self.logger.warning('Attempted write to {} after file handle closed.'.format(file_handle))
-            # We must balance this thread's need to write to file against the
-            # need to perform the cross-correlation task.
-            time.sleep(1.0) 
+                # We must balance this thread's need to write to file against the
+                # need to perform the cross-correlation task.
+                time.sleep(1.0)
 
 
     def post_process(self, raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
@@ -949,7 +971,6 @@ if __name__ == "__main__":
                      mode=args.mode,
                      loglevel=args.loglevel)
     cor.run_state_machine()
-    cor.close()
 
     # Plot results from file
     if args.mode in ['continuum', 'test']:
