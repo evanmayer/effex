@@ -140,7 +140,6 @@ class Correlator(object):
         # ---------------------------------------------------------------------
         # USER INPUT
         # ---------------------------------------------------------------------
-        # Thread for keyboard input
         self.kbd_queue = multiprocessing.Queue(1)
 
         # ---------------------------------------------------------------------
@@ -161,8 +160,8 @@ class Correlator(object):
     def _get_kbd(self, queue):
         # Helper function to run in a separate thread and add user input chars to a buffer.
         # Ends listening at end of scheduled run time
-        while self.state in ['RUN', 'CALIBRATE']:
-             queue.put(sys.stdin.read(1))
+        while self.state in ['STARTUP', 'RUN', 'CALIBRATE']:
+            queue.put(sys.stdin.read(1))
 
 
     def _child_threw_exception(self):
