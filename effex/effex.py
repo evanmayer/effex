@@ -734,13 +734,13 @@ class Correlator(object):
         self.logger.info('Data will be saved to {}.'.format(self.output_file))
 
         with open(self.output_file, 'w') as file_handle:
-            file_handle.write((f'run_time : {self.run_time}, '
-                              +f'bandwidth : {self.bandwidth}, '
-                              +f'frequency : {self.frequency}, '
-                              +f'num_samp : {self.num_samp}, '
-                              +f'resolution : {self.nbins}, '
-                              +f'gain : {self.gain}, '
-                              +f'mode : {self.mode}\n'))
+            file_handle.write((f'run_time:{self.run_time},'
+                              +f'bandwidth:{self.bandwidth},'
+                              +f'frequency:{self.frequency},'
+                              +f'num_samp:{self.num_samp},'
+                              +f'resolution:{self.nbins},'
+                              +f'gain:{self.gain},'
+                              +f'mode:{self.mode}\n'))
             if 'SPECTRUM' == self.mode:
                 # Label frequency bins
                 freqs = np.fft.fftshift(np.fft.fftfreq(self.nbins, d=1/self.bandwidth)) + self.frequency
@@ -761,129 +761,127 @@ class Correlator(object):
                 time.sleep(1.0)
 
 
-    def post_process(self, raw_output, rate, fc, nfft, num_samp, mode, omit_plot):
-        '''
-        Handles saving and displaying data.
+def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot, test_delay_sweep_step=0):
+    '''
+    Handles saving and displaying data.
 
-        Parameters
-        ----------
-        raw_output : np.array
-            If mode 'continuum', a 1d array of complex floats. If mode 'spectrum',
-            a 2d array, each row being a complex visibility spectrum from a
-            pair of SDR buffer reads
-        rate : float
-            SDR sample rate, samples per second.
-        fc : float
-            SDR center tuning frequency, Hz
-        nfft : int
-            Number of fft bins to use in frequency axis.
-        mode : str
-            Either 'continuum' for recording visibility amplitudes with time,
-            or 'spectrum' for recording spectrum visibilities with time.
-            Defaults to 'continuum'.
-        omit_plot : bool
-            If True, don't plot recorded data with matplotlib.
+    Parameters
+    ----------
+    raw_output : np.array
+        If mode 'continuum', a 1d array of complex floats. If mode 'spectrum',
+        a 2d array, each row being a complex visibility spectrum from a
+        pair of SDR buffer reads
+    rate : float
+        SDR sample rate, samples per second.
+    fc : float
+        SDR center tuning frequency, Hz
+    nfft : int
+        Number of fft bins to use in frequency axis.
+    mode : str
+        Either 'continuum' for recording visibility amplitudes with time,
+        or 'spectrum' for recording spectrum visibilities with time.
+        Defaults to 'continuum'.
+    omit_plot : bool
+        If True, don't plot recorded data with matplotlib.
+    test_delay_sweep_step : float (optional)
+        If nonzero, aids plotting of test mode data by allowing x-axis to show
+        delay in ns.
 
-        Returns
-        -------
-        fname : str
-            The filename to which output processed data is written.
-        '''
-        def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
-            '''Helper that handles plotting 1D continuum data or 2D spectrum
-            data with respect to time.'''
+    Returns
+    -------
+    fname : str
+        The filename to which output processed data is written.
+    '''
+    def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
+        '''Helper that handles plotting 1D continuum data or 2D spectrum
+        data with respect to time.'''
 
-            self.logger.info('Plotting data...')
+        print('Plotting data...')
 
-            amp = np.sqrt(np.real(visibilities * np.conj(visibilities)))
-            phase = np.angle(visibilities)
-            real_part = np.real(visibilities)
-            imag_part = np.imag(visibilities)
-            
-            if mode in ['continuum', 'test']:
-                sharey = 'none'
+        amp = np.sqrt(np.real(visibilities * np.conj(visibilities)))
+        phase = np.angle(visibilities)
+        real_part = np.real(visibilities)
+        imag_part = np.imag(visibilities)
+
+        if mode in ['continuum', 'test']:
+            sharey = 'none'
+        else:
+            sharey = 'all'
+
+        fig, axes = plt.subplots(nrows=2, ncols=2, sharex='all', sharey=sharey)
+        fig.tight_layout()
+
+        if mode in ['continuum', 'test']:
+            # Convert x axis from SDR samples to time delay
+            samples = np.arange(0, len(amp))
+            if test_delay_sweep_step:
+                delay_ns = samples * test_delay_sweep_step * 1e9
+                x = delay_ns
+                xlabel = 'Delay (ns)'
             else:
-                sharey = 'all'
-                                                                                              
-            fig, axes = plt.subplots(nrows=2, ncols=2, sharex='all', sharey=sharey)
-            fig.tight_layout()
-                                                                                              
-            if mode in ['continuum', 'test']:
-                # Convert x axis from SDR samples to time delay
-                samples = np.arange(0, len(amp))
-                if test_delay_sweep_step:
-                    delay_ns = samples * test_delay_sweep_step * 1e9
-                    x = delay_ns
-                    xlabel = 'Delay (ns)'
-                else:
-                    x = samples
-                    xlabel = 'Sample #'
-                                                                                    
-                im00 = axes[0][0].plot(x, amp)
-                axes[0][0].set_xlabel(xlabel)
-                axes[0][0].set_ylabel('Amplitude (uncalibrated)')
-                axes[0][0].set_title('Complex Cross-Correlation Amplitude')
-                                                                                   
-                im01 = axes[0][1].plot(x, real_part, label='real part')
-                im01 = axes[0][1].plot(x, imag_part, alpha=0.5, label='imag_part')
-                axes[0][1].set_xlabel(xlabel)
-                axes[0][1].set_ylabel('Amplitude')
-                axes[0][1].set_title('Complex Cross-Correlation Real & Imag')
-                axes[0][1].legend(loc='best')
-                
-                im10 = axes[1][0].plot(x, phase)
-                axes[1][0].set_xlabel(xlabel)
-                axes[1][0].set_ylabel('Phase')
-                axes[1][0].set_title('Complex Cross-Correlation Phase')
-                                                                                    
-                im11 = axes[1][1].plot(x, imag_part, label='imag_part')
-                axes[1][1].set_xlabel(xlabel)
-                axes[1][1].set_ylabel('Amplitude')
-                axes[1][1].set_title('Complex Cross-Correlation Imag')
-            else:
-                freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
-                num_spectra = np.array(range(visibilities.shape[0]))
-                X,Y = np.meshgrid(freqs, num_spectra)
-    
-                im00 = axes[0][0].pcolormesh(X, Y, amp, shading='auto', cmap='viridis')
-                axes[0][0].set_xlabel('Frequency (Hz)')
-                axes[0][0].set_ylabel('Sample #')
-                axes[0][0].set_title('Complex Cross-Correlation Amplitude')
-            
-                im01 = axes[0][1].pcolormesh(X, Y, real_part, shading='auto', cmap='viridis')
-                axes[0][1].set_xlabel('Frequency (Hz)')
-                axes[0][1].set_ylabel('Sample #')
-                axes[0][1].set_title('Real part of XCorrs')
-                
-                im10 = axes[1][0].pcolormesh(X, Y, phase, shading='auto', cmap='viridis')
-                im10.set_clim(-np.pi, np.pi)
-                axes[1][0].set_xlabel('Frequency (Hz)')
-                axes[1][0].set_ylabel('Sample #')
-                axes[1][0].set_title('Complex Cross-Correlation Phase')
-            
-                im11 = axes[1][1].pcolormesh(X, Y, imag_part, shading='auto', cmap='viridis')
-                axes[1][1].set_xlabel('Frequency (Hz)')
-                axes[1][1].set_ylabel('Sample #')
-                axes[1][1].set_title('Imag part of XCorrs')
-            
-                fig.colorbar(im00, ax=axes[0][0])
-                fig.colorbar(im01, ax=axes[0][1])
-                fig.colorbar(im10, ax=axes[1][0])
-                fig.colorbar(im11, ax=axes[1][1])
-                                                                                              
-            self.logger.info('Plotting complete.')
+                x = samples
+                xlabel = 'Sample #'
 
-            plt.show()
+            im00 = axes[0][0].plot(x, amp)
+            axes[0][0].set_xlabel(xlabel)
+            axes[0][0].set_ylabel('Amplitude (uncalibrated)')
+            axes[0][0].set_title('Complex Cross-Correlation Amplitude')
 
-            return
-    
-        if not omit_plot:
-            if 'TEST' == self.mode:
-                test_delay_sweep_step = self.test_delay_sweep_step
-            else:
-                test_delay_sweep_step = 0
+            im01 = axes[0][1].plot(x, real_part, label='real part')
+            im01 = axes[0][1].plot(x, imag_part, alpha=0.5, label='imag_part')
+            axes[0][1].set_xlabel(xlabel)
+            axes[0][1].set_ylabel('Amplitude')
+            axes[0][1].set_title('Complex Cross-Correlation Real & Imag')
+            axes[0][1].legend(loc='best')
+            
+            im10 = axes[1][0].plot(x, phase)
+            axes[1][0].set_xlabel(xlabel)
+            axes[1][0].set_ylabel('Phase')
+            axes[1][0].set_title('Complex Cross-Correlation Phase')
 
-            visualize(raw_output, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
+            im11 = axes[1][1].plot(x, imag_part, label='imag_part')
+            axes[1][1].set_xlabel(xlabel)
+            axes[1][1].set_ylabel('Amplitude')
+            axes[1][1].set_title('Complex Cross-Correlation Imag')
+        else:
+            freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
+            num_spectra = np.array(range(visibilities.shape[0]))
+            X,Y = np.meshgrid(freqs, num_spectra)
+
+            im00 = axes[0][0].pcolormesh(X, Y, amp, shading='auto', cmap='viridis')
+            axes[0][0].set_xlabel('Frequency (Hz)')
+            axes[0][0].set_ylabel('Sample #')
+            axes[0][0].set_title('Complex Cross-Correlation Amplitude')
+
+            im01 = axes[0][1].pcolormesh(X, Y, real_part, shading='auto', cmap='viridis')
+            axes[0][1].set_xlabel('Frequency (Hz)')
+            axes[0][1].set_ylabel('Sample #')
+            axes[0][1].set_title('Real part of XCorrs')
+
+            im10 = axes[1][0].pcolormesh(X, Y, phase, shading='auto', cmap='viridis')
+            im10.set_clim(-np.pi, np.pi)
+            axes[1][0].set_xlabel('Frequency (Hz)')
+            axes[1][0].set_ylabel('Sample #')
+            axes[1][0].set_title('Complex Cross-Correlation Phase')
+
+            im11 = axes[1][1].pcolormesh(X, Y, imag_part, shading='auto', cmap='viridis')
+            axes[1][1].set_xlabel('Frequency (Hz)')
+            axes[1][1].set_ylabel('Sample #')
+            axes[1][1].set_title('Imag part of XCorrs')
+
+            fig.colorbar(im00, ax=axes[0][0])
+            fig.colorbar(im01, ax=axes[0][1])
+            fig.colorbar(im10, ax=axes[1][0])
+            fig.colorbar(im11, ax=axes[1][1])
+
+        print('Plotting complete.')
+
+        plt.show()
+
+        return
+
+    if not omit_plot:
+        visualize(raw_output, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
 
 
 if __name__ == "__main__":
@@ -976,6 +974,24 @@ if __name__ == "__main__":
         skiprows = 1
     else:
         skiprows = 2
+
+    if 'test' == args.mode:
+        test_delay_sweep_step = cor.test_delay_sweep_step
+    else:
+        test_delay_sweep_step = 0
+
+    # Wait to ensure all file writes have finished
+    time.sleep(1.0)
+
     output = np.loadtxt(cor.output_file, dtype=np.complex128, delimiter=',', skiprows=skiprows)
-    cor.post_process(output, args.bandwidth, args.fc, args.nfft, args.num_samp, args.mode, args.omit_plot)
+
+    post_process(output,
+        args.bandwidth,
+        args.fc,
+        args.nfft,
+        args.num_samp,
+        args.mode,
+        args.omit_plot,
+        test_delay_sweep_step=test_delay_sweep_step
+    )
 
