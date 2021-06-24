@@ -44,6 +44,6 @@ cd pyrtlsdr
 pip install ./
 ```
 
-At this point, you should have all dependencies necessary to run the application pfb_correlator.py.
+At this point, you should have all dependencies necessary to run the application effex.py.
 
 If you're using the RTL-SDR.com V3 version of the USB receiver with selectable bias-t for powering devices over coax, see the bias-t util build instructions [here](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/).
