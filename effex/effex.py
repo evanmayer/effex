@@ -391,7 +391,7 @@ class Correlator(object):
                     self._calibrate_task()
                     self.state = 'RUN'
                 elif 'RUN' == self.state:
-                    if 'TEST' == self.mode:
+                    if self.mode in ['TEST']:
                         self.calibrated_delay += self.test_delay_sweep_step
                     visibility = self._run_task()
                     # send cross-correlated data to output buffer
@@ -511,6 +511,10 @@ class Correlator(object):
         rot = cp.exp(-2j * cp.pi * freqs * (-self.calibrated_delay))
         xpower_spec = f0 * cp.conj(f1 * rot)
         xpower_spec = cp.fft.fftshift(xpower_spec.mean(axis=0))
+
+        ncols = xpower_spec.shape[-1]
+        xpower_spec[ncols//2] = (xpower_spec[-1+ncols//2] + xpower_spec[1+ncols//2]) / 2.
+
     
         if self.mode in ['CONTINUUM', 'TEST']: # don't save spectral information
             vis = xpower_spec.mean(axis=0) / self.bandwidth # a visibility amplitude estimate
@@ -573,7 +577,7 @@ class Correlator(object):
         frac_delay = self._estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
         total_delay = integer_delay + frac_delay
 
-        if 'TEST' == self.mode:
+        if self.mode in ['TEST']:
             total_delay -= self.test_delay_offset
         return total_delay
     
