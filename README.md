@@ -47,7 +47,7 @@ Hardware Required
 
 Here's an image of my hardware stack set up for calibration on my kitchen table.
 
-<img src="https://github.com/evanmayer/effex/blob/master/images/hwstack.jpg" width="500">
+<img src="https://github.com/evanmayer/effex/blob/4e3adab93cec117f41b0b552496061c7877abd58/images/hwstack.jpg" width="500">
 
 Software Implementation
 -----------------------
