@@ -10,7 +10,7 @@ python effex.py --time 60 --bandwidth 2.4e6 --frequency 1.4204e9 --num_samp 2621
 
 which generates output data that is automatically plotted as
 
-<img src="https://github.com/evanmayer/effex/blob/master/images/Figure_101.png" width="500">
+<img src="https://github.com/evanmayer/effex/blob/ef046470ab63b4b85bccb2882bb4bc91c481c668/images/Figure_101.png" width="500">
 
 The time series of complex cross-correlation spectra is written to a file in .csv format.
 
@@ -30,9 +30,9 @@ Software Required
 - [cupy](https://cupy.dev/)
 - NVIDIA RAPIDSAI [cuSignal](https://github.com/rapidsai/cusignal)
 - My fork of roger-'s RTL-SDR python interface: [pyrtlsdr](https://github.com/evanmayer/pyrtlsdr)*
-- Keenerd's experimental fork of the RTLSDR USB library: [librtlsdr](https://github.com/keenerd/rtl-sdr)*
+- A maintained fork of the RTLSDR USB library: [librtlsdr](https://github.com/librtlsdr/librtlsdr)*
 
-\* These libraries add functions to disable RTL-SDR phase-locked-loop (PLL) dithering, which is necessary for coherent operation of two receivers that share a clock signal, at the cost of tuning frequency accuracy.
+\* These libraries add functions to disable RTL-SDR phase-locked-loop (PLL) dithering, which is necessary for coherent operation of two receivers that share a clock signal, at the cost of tuning frequency accuracy. The librtlsdr fork is more actively maintained than the osmocom one installed by package managers.
 
 If you have trouble with the install of dependencies, see the [detailed install instructions](https://github.com/evanmayer/effex/blob/master/install_instructions.md) I wrote for my Jetson Nano.
 
