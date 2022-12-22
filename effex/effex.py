@@ -300,7 +300,7 @@ class Correlator(object):
     def gain(self):
         '''The tuner gain of the RtlSdr devices.'''
         return self._gain
-                                                             
+
     @gain.setter
     def gain(self, value):
         self._gain = value
@@ -477,7 +477,7 @@ class Correlator(object):
                                                     self.bandwidth,
                                                     self.frequency)
         self.logger.info('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
-       
+
 
     def _run_task(self):
         '''
@@ -564,13 +564,11 @@ class Correlator(object):
         fc : float
             SDR center tuning frequency, Hz
 
-                                                                             
         Returns
         -------
         total_delay : float
             The delay estimate between channels in seconds
         '''
-
 
         integer_delay = self._estimate_integer_delay(iq_0, iq_1, rate)
         frac_delay = self._estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
@@ -579,8 +577,8 @@ class Correlator(object):
         if self.mode in ['TEST']:
             total_delay -= self.test_delay_offset
         return total_delay
-    
-    
+
+
     def _estimate_integer_delay(self, iq_0, iq_1, rate):
         '''
         Returns delay estimate between channels to the nearest sample division.
@@ -601,7 +599,7 @@ class Correlator(object):
         # TODO: lift constraint on equal-length timeseries
         assert len(iq_0) == len(iq_1), ('Algorithm assumes input complex timeseries'
             + ' are of equal length.')
-    
+
         # Find the delay to the nearest integer sample dt
         # First, pad by length of signals
         n = len(iq_0)
@@ -615,12 +613,20 @@ class Correlator(object):
         xcorr = cp.fft.ifft(f0 * cp.conj(f1))
         xcorr = cp.fft.fftshift(xcorr)
     
-        integer_lag = n - int(cp.argmax(cp.abs(xcorr)))
+        # Do subpixel refinement with a Gaussian estimator of peak location
+        # DOI: 10.1007/978-3-642-58288-2_15 
+        imax = int(cp.argmax(cp.abs(xcorr)))
+        # TODO: prevent out of bounds errors
+        xprev = cp.abs(xcorr[imax - 1])
+        xbest = cp.abs(xcorr[imax])
+        xnext = cp.abs(xcorr[imax + 1])
+        delta_subpixel = 0.5 * (np.log(xprev) - np.log(xnext)) / (np.log(xprev) - 2. * np.log(xbest) + np.log(xnext))
+        integer_lag = n - (imax + delta_subpixel)
         integer_delay = integer_lag / rate
 
         return integer_delay
-    
-    
+
+
     def _estimate_fractional_delay(self, iq_0, iq_1, integer_delay, rate, fc):
         '''
         Returns fractional sampling time correction between channels in seconds.
@@ -691,10 +697,10 @@ class Correlator(object):
             fig.show()
             self.logger.warning('1st-pass delay calibration failed: fractional'
                 + ' sample time correction, |{}| > 1/sample rate, {} '.format(frac_delay, 1/rate))
-    
+
         return frac_delay
-    
-    
+
+
     async def _streaming(self, sdr, buf, num_samp, start_time, run_time):
         '''Begins streaming sample chunks from a pyrtlsdr RtlSdr() instance to a
         multiprocess.Queue() buffer at a given time and stops at a given later time.
@@ -812,7 +818,6 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot, test_del
             sharey = 'all'
 
         fig, axes = plt.subplots(nrows=2, ncols=2, sharex='all', sharey=sharey)
-        fig.tight_layout()
 
         if mode in ['continuum', 'test']:
             # Convert x axis from SDR samples to time delay
@@ -876,6 +881,7 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot, test_del
             fig.colorbar(im01, ax=axes[0][1])
             fig.colorbar(im10, ax=axes[1][0])
             fig.colorbar(im11, ax=axes[1][1])
+        fig.tight_layout()
 
         print('Plotting complete.')
 
