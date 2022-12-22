@@ -386,6 +386,9 @@ class Correlator(object):
                     # Complex chunks of IQ data vs. time go over to GPU
                     self.gpu_iq_0[:] = data_0
                     self.gpu_iq_1[:] = data_1
+                    # Fix DC spike: subtract mean of real and imag components
+                    self.gpu_iq_0 = (self.gpu_iq_0.real - self.gpu_iq_0.real.mean()) + 1j * (self.gpu_iq_0.imag - self.gpu_iq_0.imag.mean())
+                    self.gpu_iq_1 = (self.gpu_iq_1.real - self.gpu_iq_1.real.mean()) + 1j * (self.gpu_iq_1.imag - self.gpu_iq_1.imag.mean())
     
                 if 'CALIBRATE' == self.state:
                     self._calibrate_task()
@@ -512,10 +515,6 @@ class Correlator(object):
         xpower_spec = f0 * cp.conj(f1 * rot)
         xpower_spec = cp.fft.fftshift(xpower_spec.mean(axis=0))
 
-        ncols = xpower_spec.shape[-1]
-        xpower_spec[ncols//2] = (xpower_spec[-1+ncols//2] + xpower_spec[1+ncols//2]) / 2.
-
-    
         if self.mode in ['CONTINUUM', 'TEST']: # don't save spectral information
             vis = xpower_spec.mean(axis=0) / self.bandwidth # a visibility amplitude estimate
         else:
