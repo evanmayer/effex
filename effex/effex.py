@@ -779,25 +779,31 @@ def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot, test_del
         else:
             freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1/rate)) + fc
             num_spectra = np.array(range(visibilities.shape[0]))
-            X,Y = np.meshgrid(freqs, num_spectra)
+            # Limit the time resolution of plots to make displaying more snappy.
+            stride = 1
+            max_rows = 50
+            if num_spectra.max() > max_rows:
+                stride = num_spectra.max() // max_rows
 
-            im00 = axes[0][0].pcolormesh(X, Y, amp, shading='auto', cmap='viridis')
+            X,Y = np.meshgrid(freqs, num_spectra[::stride])
+
+            im00 = axes[0][0].pcolormesh(X, Y, amp[::stride,:], shading='auto', cmap='viridis')
             axes[0][0].set_xlabel('Frequency (Hz)')
             axes[0][0].set_ylabel('Sample #')
             axes[0][0].set_title('Complex Cross-Correlation Amplitude')
 
-            im01 = axes[0][1].pcolormesh(X, Y, real_part, shading='auto', cmap='viridis')
+            im01 = axes[0][1].pcolormesh(X, Y, real_part[::stride,:], shading='auto', cmap='viridis')
             axes[0][1].set_xlabel('Frequency (Hz)')
             axes[0][1].set_ylabel('Sample #')
             axes[0][1].set_title('Real part of XCorrs')
 
-            im10 = axes[1][0].pcolormesh(X, Y, phase, shading='auto', cmap='viridis')
+            im10 = axes[1][0].pcolormesh(X, Y, phase[::stride,:], shading='auto', cmap='viridis')
             im10.set_clim(-np.pi, np.pi)
             axes[1][0].set_xlabel('Frequency (Hz)')
             axes[1][0].set_ylabel('Sample #')
             axes[1][0].set_title('Complex Cross-Correlation Phase')
 
-            im11 = axes[1][1].pcolormesh(X, Y, imag_part, shading='auto', cmap='viridis')
+            im11 = axes[1][1].pcolormesh(X, Y, imag_part[::stride,:], shading='auto', cmap='viridis')
             axes[1][1].set_xlabel('Frequency (Hz)')
             axes[1][1].set_ylabel('Sample #')
             axes[1][1].set_title('Imag part of XCorrs')
