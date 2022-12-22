@@ -571,8 +571,7 @@ class Correlator(object):
         '''
 
         integer_delay = self._estimate_integer_delay(iq_0, iq_1, rate)
-        frac_delay = self._estimate_fractional_delay(iq_0, iq_1, integer_delay, rate, fc)
-        total_delay = integer_delay + frac_delay
+        total_delay = integer_delay
 
         if self.mode in ['TEST']:
             total_delay -= self.test_delay_offset
@@ -625,80 +624,6 @@ class Correlator(object):
         integer_delay = integer_lag / rate
 
         return integer_delay
-
-
-    def _estimate_fractional_delay(self, iq_0, iq_1, integer_delay, rate, fc):
-        '''
-        Returns fractional sampling time correction between channels in seconds.
-        First corrects integer sample lag to make estimating the fractional lag
-        tractable, then finds the slope of the phase of the cross-correlation by
-        linear regression to estimate the fractional sample delay.
-
-        Parameters
-        ----------
-        iq_0, iq_1 : cusignal mapped, pinned array
-            GPU memory containing SDR IQ data from channels
-        integer_delay : int
-            estimated value from _estimate_integer_delay(), sec
-        rate : float
-            SDR sample rate, samples per second
-        fc : float
-            SDR center tuning frequency, Hz
-
-        Returns
-        -------
-        frac_delay, float
-            The fractional lag between the argument signals in seconds
-        '''
-        N = 8192
-        f0 = cp.fft.fft(cp.array(iq_0), n=N)
-        f1 = cp.fft.fft(cp.array(iq_1), n=N)
-        freqs = cp.fft.fftfreq(N, d=1/rate) + fc
-    
-        # Yes, there is a double negative, for mathematical clarity. Most eqns
-        # have -i, and we are "undoing" the delay, so -delay.
-        rot = cp.exp(-2j * cp.pi * freqs * -integer_delay)
-        # Integer sample correction as a phase rotation in frequency space
-        xcorr = f0 * cp.conj(f1 * rot)
-    
-        # Prepare to fit residual phase gradient:
-        phases = cp.angle(xcorr)
-        # Due to receiver bandpass shape, edge frequencies have less power => less certain phase
-        # Assign weights accordingly
-        weights = cp.abs(xcorr)
-        weights /= cp.max(weights)
-        # Fit phase slope across band
-        # https://scipython.com/book/chapter-8-scipy/examples/weighted-and-non-weighted-least-squares-fitting/ 
-        def model(x, m, b):
-            # From "Reliable fitting of phase data without unwrapping by wrapping the fit model," Kramer et. al. 2012
-            return ((m * x + b) + np.pi) % (2. * np.pi) - np.pi
-        # initial guesses
-        p0 = [0, 0]
-        # fitting
-        popt, pcov = optimize.curve_fit(model,
-            cp.asnumpy(freqs),
-            cp.asnumpy(phases), 
-            p0,
-            sigma=1./cp.asnumpy(weights),
-            absolute_sigma=False # not real sigmas, just weights
-        )
-        slope, intc = popt
-    
-        frac_delay = slope
-    
-        if np.abs(frac_delay) > 1/rate:
-            fig = plt.figure(100)
-            ax = plt.axes()
-            ax.scatter(cp.asnumpy(freqs), cp.asnumpy(phases), alpha=0.1, label='Calibration data: phase')
-            ax.plot(cp.asnumpy(freqs), model(cp.asnumpy(freqs), slope, intc), color='red', label='Fit: phase slope')
-            ax.set_xlabel('Frequency (Hz)')
-            ax.set_ylabel('Phase (rad)')
-            ax.legend(loc='best', framealpha=0.4)
-            fig.show()
-            self.logger.warning('1st-pass delay calibration failed: fractional'
-                + ' sample time correction, |{}| > 1/sample rate, {} '.format(frac_delay, 1/rate))
-
-        return frac_delay
 
 
     async def _streaming(self, sdr, buf, num_samp, start_time, run_time):
