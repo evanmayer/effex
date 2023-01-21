@@ -360,6 +360,7 @@ class Correlator(object):
                 # Check for data available
                 buf0_empty = False
                 buf1_empty = False
+                get_samples_start_time = time.time()
                 try:
                     data_0 = self.buf0.get(block=True, timeout=1)
                 except Empty:
@@ -370,6 +371,8 @@ class Correlator(object):
                 except Empty:
                     self.logger.debug('Buffer 1 empty')
                     buf1_empty = True
+                get_samples_exec_time = time.time() - get_samples_start_time
+                self.logger.debug('Fetching SDR samples from buffers took {} s'.format(get_samples_exec_time))
                 # Is it time to stop?
                 if (buf0_empty and buf1_empty):
                     if time.time() - self.start_time < self.run_time:
@@ -382,13 +385,18 @@ class Correlator(object):
                             self.state = 'SHUTDOWN'
                         else:
                             self.logger.debug('Time up, but waiting for output buffer to drain.')
+                elif (buf0_empty or buf1_empty):
+                    continue
                 else:
                     # Complex chunks of IQ data vs. time go over to GPU
+                    gpu_samples_transfer_start = time.time()
                     self.gpu_iq_0[:] = data_0
                     self.gpu_iq_1[:] = data_1
                     # Fix DC spike: subtract mean of real and imag components
                     self.gpu_iq_0 = (self.gpu_iq_0.real - self.gpu_iq_0.real.mean()) + 1j * (self.gpu_iq_0.imag - self.gpu_iq_0.imag.mean())
                     self.gpu_iq_1 = (self.gpu_iq_1.real - self.gpu_iq_1.real.mean()) + 1j * (self.gpu_iq_1.imag - self.gpu_iq_1.imag.mean())
+                    gpu_samples_transfer_time = time.time() - gpu_samples_transfer_start
+                    self.logger.debug('CPU -> GPU memory transfer took {} s'.format(gpu_samples_transfer_time))
     
                 if 'CALIBRATE' == self.state:
                     self._calibrate_task()
@@ -396,7 +404,10 @@ class Correlator(object):
                 elif 'RUN' == self.state:
                     if self.mode in ['TEST']:
                         self.calibrated_delay += self.test_delay_sweep_step
+                    gpu_start_time = time.time()
                     visibility = self._run_task()
+                    gpu_exec_time = time.time() - gpu_start_time
+                    self.logger.debug('GPU task took {} s'.format(gpu_exec_time))
                     # send cross-correlated data to output buffer
                     self.vis_out.put(visibility)
             elif 'SHUTDOWN' == self.state:
