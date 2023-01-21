@@ -9,24 +9,22 @@ conda create --name effex-dev --clone cusignal-dev
 conda activate effex-dev
 ```
 
-3. Clone keenerd's fork of librtlsdr:
+3. Clone a maintained fork of librtlsdr:
 
 ```
-git clone https://github.com/keenerd/rtl-sdr.git
+git clone git@github.com:librtlsdr/librtlsdr.git
 ```
 
-4. To build and install this library, follow the install instructions for the librtlsdr source from [here](https://www.rtl-sdr.com/rtl-sdr-quick-start-guide/) (Linux is at the bottom).
+4. To build and install this library, follow the install instructions for the librtlsdr source from [here](https://github.com/librtlsdr/librtlsdr).
 
 For completeness, on Linux, you'd do:
 
 ```
-cd rtl-sdr/
-mkdir build
-cd build
+cd librtlsdr/
+mkdir build && cd build
 cmake ../ -DINSTALL_UDEV_RULES=ON
 make
 sudo make install
-sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
 sudo ldconfig
 ```
 
@@ -44,6 +42,6 @@ cd pyrtlsdr
 pip install ./
 ```
 
-At this point, you should have all dependencies necessary to run the application effex.py.
+At this point, you should have all dependencies necessary to run the application `effex.py`.
 
 If you're using the RTL-SDR.com V3 version of the USB receiver with selectable bias-t for powering devices over coax, see the bias-t util build instructions [here](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/).
