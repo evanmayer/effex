@@ -507,14 +507,11 @@ class Correlator(object):
         vis :  If mode == 'continuum', float. If mode =='spectrum', cupy.array.
             The result of one complex cross-correlation of the input IQ data.
         '''
-        # Threading to take ffts using polyphase filterbank
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as iq_processor:
-            future_0 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window))
-            future_1 = iq_processor.submit(self._spectrometer_poly, *(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window))
-            f0 = future_0.result()
-            f1 = future_1.result()
-    
-        # Apply phase gradient, inspired by 
+        # Take ffts using polyphase filterbank
+        f0 = self._spectrometer_poly(cp.array(self.gpu_iq_0), self.ntaps, self.nbins, self.window)
+        f1 = self._spectrometer_poly(cp.array(self.gpu_iq_1), self.ntaps, self.nbins, self.window)
+
+        # Apply phase gradient, inspired by
         # http://www.gmrt.ncra.tifr.res.in/doc/WEBLF/LFRA/node70.html
         # implemented according to Thompson, Moran, Swenson's Interferometry and 
         # Synthesis in Radio Astronoy, 3rd ed., p.364: Fractional Sample Delay 
@@ -530,7 +527,6 @@ class Correlator(object):
             vis = xpower_spec.mean(axis=0) / self.bandwidth # a visibility amplitude estimate
         else:
             vis = xpower_spec
-    
         return vis
 
 
