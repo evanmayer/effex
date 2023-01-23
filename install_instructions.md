@@ -34,7 +34,7 @@ Ensure any preinstalled DVB-T drivers don't intefere:
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee --append /etc/modprobe.d/blacklist-dvb_usb_rtl28xxu.conf
 ```
 
-5. Clone the evanmayer fork of pyrtlsdr, and install it:
+5. Outside of the `librtlsdr` directory again, clone the evanmayer fork of pyrtlsdr, and install it:
 
 ```
 git clone https://github.com/evanmayer/pyrtlsdr.git
@@ -43,5 +43,7 @@ pip install ./
 ```
 
 At this point, you should have all dependencies necessary to run the application `effex.py`.
+
+**Reboot.**
 
 If you're using the RTL-SDR.com V3 version of the USB receiver with selectable bias-t for powering devices over coax, see the bias-t util build instructions [here](https://www.rtl-sdr.com/rtl-sdr-blog-v-3-dongles-user-guide/).
