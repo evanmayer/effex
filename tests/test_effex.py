@@ -111,7 +111,7 @@ class TestNominal(object):
     @pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
     def test_func_estimate_delay(self, cor, num_samp, rate, samp_offset_int):
         # Same as above, since this is little more than a wrapper
-        delay_threshold = 0.5
+        delay_threshold = 1e-6
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
 

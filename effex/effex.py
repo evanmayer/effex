@@ -483,8 +483,7 @@ class Correlator(object):
         self.logger.debug('Starting calibration')
         self.calibrated_delay = self._estimate_delay(self.gpu_iq_0,
                                                     self.gpu_iq_1,
-                                                    self.bandwidth,
-                                                    self.frequency)
+                                                    self.bandwidth)
         self.logger.info('Estimated delay (us): {}'.format(1e6 * self.calibrated_delay))
 
 
