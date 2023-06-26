@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 
 def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
@@ -98,6 +99,54 @@ def visualize(visibilities, rate, fc, nfft, mode, test_delay_sweep_step=0):
     return
 
 
+def fit_interferometer_model(raw_output, delay_step, bandwidth, center_freq):
+    def sinc_respone(D, l, nu0, dnu):
+        '''Thompsom, Moran, Swenson Eq. 2.4
+        D : distance between antennas
+        l : direction cosine, sin(theta)
+        nu0 : center frequency
+        dnu : bandwidth
+        '''
+        c = 2.998e8 # m / s
+        x = np.pi * D * l * dnu / c
+        f = np.cos(2. * np.pi * D * l * nu0 / c) * np.sinc(x)
+        return f
+
+    def fitfunc(tau, amp, tau0, dnu, slope):
+        '''Thompsom, Moran, Swenson Eq. 2.4,
+        cast in delay form
+        tau = D sin(theta) / c = D l / c
+        '''
+        c = 2.998e8 # m / s
+        # f = np.cos(2. * np.pi * (tau + tau0) * nu0) * np.sinc(np.pi * (tau + tau0) * dnu)
+        f = np.sinc(np.pi * (tau + tau0) * dnu)
+        return (amp * f + slope * tau) ** 2
+
+    nu0 = center_freq
+    dnu = bandwidth
+
+    visibilities = raw_output
+    amp = np.sqrt(np.real(visibilities * np.conj(visibilities)))
+
+    samples = np.arange(-len(amp) // 2, len(amp) // 2)
+    delay = samples * delay_step # s
+    delay0 = 5.84e-8 # s
+
+    p0 = [np.max(amp) ** .5, delay0, dnu, 0]
+    pfit, pcov = curve_fit(fitfunc, delay, amp, p0)
+    print(pfit)
+
+    fig, ax = plt.subplots()
+    ax.plot(delay, amp, label='measurement')
+    ax.plot(delay, fitfunc(delay, pfit[0], pfit[1], pfit[2], pfit[3]), label='sinc envelope fit')
+    ax.set_xlabel('Delay (s)')
+    ax.set_ylabel('Amplitude (adu)')
+    ax.legend()
+    plt.show()
+
+    return
+
+
 def post_process(raw_output, rate, fc, nfft, mode, omit_plot, test_delay_sweep_step=0):
     '''
     Handles displaying data.
@@ -131,6 +180,8 @@ def post_process(raw_output, rate, fc, nfft, mode, omit_plot, test_delay_sweep_s
     '''
     if not omit_plot:
         visualize(raw_output, rate, fc, nfft, mode, test_delay_sweep_step=test_delay_sweep_step)
+        if mode == 'test':
+            fit_interferometer_model(raw_output, test_delay_sweep_step, rate, fc)
 
 
 if __name__ == "__main__":
