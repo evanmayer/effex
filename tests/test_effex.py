@@ -109,16 +109,16 @@ class TestNominal(object):
     @pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
     @pytest.mark.parametrize('rate', [2.4e6])
     @pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
-    def test_func_estimate_delay_gaussian(self, cor, num_samp, rate, samp_offset_int):
+    def test_func_estimate_delay(self, cor, num_samp, rate, samp_offset_int):
         # Same as above, since this is little more than a wrapper
         delay_threshold = 0.5
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
 
         est_delay = cor._estimate_delay(iq_0, iq_1, rate)
-        est_delay_samples = est_delay * rate
+        est_delay_samples = est_delay
 
-        assert(abs(samp_offset_int - est_delay_samples) < delay_threshold)
+        assert(abs(samp_offset_int / rate - est_delay_samples) < delay_threshold)
 
 
     # -----------------------------------------------------------------------------
