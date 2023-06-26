@@ -575,7 +575,7 @@ class Correlator(object):
             The delay estimate between channels in seconds
         '''
 
-        integer_delay = self._estimate_delay_parabola(iq_0, iq_1, rate)
+        integer_delay = self.test_func_estimate_delay_gaussian(iq_0, iq_1, rate)
         total_delay = integer_delay
 
         if self.mode in ['TEST']:
