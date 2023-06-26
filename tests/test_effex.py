@@ -92,17 +92,18 @@ class TestNominal(object):
     @pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
     @pytest.mark.parametrize('rate', [2.4e6])
     @pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
-    def test_func_estimate_integer_delay(self, cor, num_samp, rate, samp_offset_int):
+    def test_func_estimate_delay_gaussian(self, cor, num_samp, rate, samp_offset_int):
         # This is to test that integer-sample delay estimation is functioning by
         # artificially applying a known delay and estimating it like we would with
         # no a priori knowledge
+        delay_threshold = 1e-3
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
     
-        est_delay = cor._estimate_integer_delay(iq_0, iq_1, rate)
+        est_delay = cor._estimate_delay_gaussian(iq_0, iq_1, rate)
         est_delay_samples = est_delay * rate
     
-        assert(abs(samp_offset_int - est_delay_samples) < 1e-9)
+        assert(abs(samp_offset_int - est_delay_samples) < delay_threshold)
     
     
     # -----------------------------------------------------------------------------

@@ -575,7 +575,7 @@ class Correlator(object):
             The delay estimate between channels in seconds
         '''
 
-        integer_delay = self._estimate_integer_delay(iq_0, iq_1, rate)
+        integer_delay = self._estimate_delay_parabola(iq_0, iq_1, rate)
         total_delay = integer_delay
 
         if self.mode in ['TEST']:
@@ -583,9 +583,9 @@ class Correlator(object):
         return total_delay
 
 
-    def _estimate_integer_delay(self, iq_0, iq_1, rate):
+    def _estimate_delay_gaussian(self, iq_0, iq_1, rate):
         '''
-        Returns delay estimate between channels to the nearest sample division.
+        Returns subsample delay estimate between channels using a gaussian estimator.
 
         Parameters
         ----------
@@ -596,9 +596,8 @@ class Correlator(object):
 
         Returns
         -------
-        integer_delay : float
-            The delay estimate between channels in seconds due to an integer
-            number of samples
+        delay : float
+            The delay estimate between channels in seconds
         '''
         # TODO: lift constraint on equal-length timeseries
         assert len(iq_0) == len(iq_1), ('Algorithm assumes input complex timeseries'
@@ -617,7 +616,7 @@ class Correlator(object):
         xcorr = cp.fft.ifft(f0 * cp.conj(f1))
         xcorr = cp.fft.fftshift(xcorr)
     
-        # Do subpixel refinement with a Gaussian estimator of peak location
+        # Do subsample refinement with a Gaussian estimator of peak location
         # DOI: 10.1007/978-3-642-58288-2_15 
         imax = int(cp.argmax(cp.abs(xcorr)))
         # TODO: prevent out of bounds errors
