@@ -556,7 +556,7 @@ class Correlator(object):
         return channelized
     
     
-    def _estimate_delay(self, iq_0, iq_1, rate, fc):
+    def _estimate_delay(self, iq_0, iq_1, rate):
         '''
         Returns delay estimate between channels in seconds.
 
@@ -566,8 +566,6 @@ class Correlator(object):
             GPU memory containing SDR IQ data from channels
         rate : float
             SDR sample rate, samples per second
-        fc : float
-            SDR center tuning frequency, Hz
 
         Returns
         -------
