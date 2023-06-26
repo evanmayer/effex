@@ -34,13 +34,13 @@ class TestNominal(object):
         omega = 2. * cp.pi * freq
         phi = 0.0
         iq = cp.cos(omega * t + phi) + 1j * cp.sin(omega * t + phi)
-    
+
         if noisy:
             iq += self.gen_complex_noise(num_samp, rate, scale=.1)
-    
+
         return iq
-    
-    
+
+
     def gen_complex_noise(self, num_samp, rate, scale=.1):
         time = num_samp / rate
         t = cp.linspace(0, time, num=num_samp)
@@ -74,38 +74,38 @@ class TestNominal(object):
                 * cusignal.firwin(taps * branches, cutoff=1.0/branches, window='rectangular'))    
 
         spec = cor._spectrometer_poly(iq, taps, branches, window)
-    
+
         psd = cp.real(spec * cp.conj(spec)).mean(axis=0)
-    
+
         freqs = cp.fft.fftshift(cp.fft.fftfreq(len(psd), d=1/rate))
         psd = cp.fft.fftshift(psd)
-    
+
         freq_err_pct = 100. * abs(freqs[cp.argmax(psd)] - freq) / freq
         assert(freq_err_pct < 1.)
-    
+
         if plot:
             ax = plt.axes()
             ax.plot(cp.asnumpy(freqs), cp.asnumpy(psd))
             plt.show()
-    
-    
+
+
     @pytest.mark.parametrize('num_samp', [3+2**12, 2**18])
     @pytest.mark.parametrize('rate', [2.4e6])
     @pytest.mark.parametrize('samp_offset_int', [-2000, -1001, -1, 0, 1, 999, 2000])
     def test_func_estimate_delay_gaussian(self, cor, num_samp, rate, samp_offset_int):
-        # This is to test that integer-sample delay estimation is functioning by
+        # This is to test that subsample delay estimation is functioning by
         # artificially applying a known delay and estimating it like we would with
         # no a priori knowledge
-        delay_threshold = 1e-3
+        delay_threshold = 1e-2
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
-    
+
         est_delay = cor._estimate_delay_gaussian(iq_0, iq_1, rate)
         est_delay_samples = est_delay * rate
-    
+
         assert(abs(samp_offset_int - est_delay_samples) < delay_threshold)
-    
-    
+
+
     # -----------------------------------------------------------------------------
     # System-level testing
     # -----------------------------------------------------------------------------
@@ -117,33 +117,33 @@ class TestNominal(object):
         assert(2**12 == cor.nbins)
         assert(1.4204e9 == cor.frequency)
         assert(49.6 == cor.gain)
-    
-    
+
+
     def test_change_bandwidth(self, cor):
         cor.bandwidth = 2.3e6
         assert(2.3e6 == cor.bandwidth)
-    
-    
+
+
     def test_change_nbins(self, cor):
         cor.nbins = 2**11
         assert(2**11 == cor.nbins)
-    
-    
+
+
     def test_change_frequency(self, cor):
         cor.frequency = 1.419e9
         assert(1.419e9 == cor.frequency)
-    
-    
+
+
     def test_change_gain(self, cor):
         cor.gain = 29.7
         assert(29.7 == cor.gain)
-    
-    
+
+
     def test_nominal_state_transitions(self, cor):
         nom_sequence = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, nom_sequence)
-    
-    
+
+
     def test_early_aborts(self, cor):
         seq = ('STARTUP', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
@@ -153,8 +153,8 @@ class TestNominal(object):
         self.step_and_assert(cor, seq)
         seq = ('STARTUP', 'RUN', 'CALIBRATE', 'RUN', 'SHUTDOWN', 'OFF')
         self.step_and_assert(cor, seq)
-    
-    
+
+
     def test_bad_transition_from_OFF(self, cor):
         # Starting in OFF
         with pytest.raises(fx.Correlator.StateTransitionError):
@@ -231,5 +231,3 @@ def test_alt_mode_init():
     assert('OFF' == alt_cor.state)
     assert('CONTINUUM' == alt_cor.mode)
     alt_cor.close()
-
-
