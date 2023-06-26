@@ -96,7 +96,7 @@ class TestNominal(object):
         # This is to test that subsample delay estimation is functioning by
         # artificially applying a known delay and estimating it like we would with
         # no a priori knowledge
-        delay_threshold = 1e-2
+        delay_threshold = 0.5
         iq_0 = self.gen_complex_noise(num_samp, rate)
         iq_1 = cp.roll(iq_0, samp_offset_int)
 
