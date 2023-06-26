@@ -36,7 +36,7 @@ class Correlator(object):
     _states = ('OFF', 'STARTUP', 'RUN', 'CALIBRATE', 'SHUTDOWN')
     _modes = ('SPECTRUM', 'CONTINUUM', 'TEST')
 
-    _BUFFER_SIZE = int(5e8 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
+    _BUFFER_SIZE = int(1e9 // (2**18 * np.dtype(np.complex128).itemsize) // 2)
     '''sized to easily fit several large of np.complex128 arrays in the 4GB RAM on an NVIDIA Jetson Nano'''
     _STARTUP_DURATION = 1. # sec
     '''allow some time for _streaming subprocesses to get to starting line'''
@@ -153,8 +153,8 @@ class Correlator(object):
         crit_delay = 1 / self.frequency
         # Step through delay space with balance between sampling fidelity and
         # sweep speed:
-        self.test_delay_sweep_step = crit_delay / 10
-        self.test_delay_offset = self.test_delay_sweep_step * 200
+        self.test_delay_sweep_step = crit_delay / 2
+        self.test_delay_offset = self.test_delay_sweep_step * 1600
 
 
     def _get_kbd(self, queue):
@@ -699,7 +699,7 @@ class Correlator(object):
                     np.savetxt(file_handle, [cp.asnumpy(data)], delimiter=',')
                 # We must balance this thread's need to write to file against the
                 # need to perform the cross-correlation task.
-                time.sleep(1.0)
+                time.sleep(0.1)
 
 
 def post_process(raw_output, rate, fc, nfft, num_samp, mode, omit_plot, test_delay_sweep_step=0):
