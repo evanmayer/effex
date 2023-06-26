@@ -575,7 +575,7 @@ class Correlator(object):
             The delay estimate between channels in seconds
         '''
 
-        integer_delay = self.test_func_estimate_delay_gaussian(iq_0, iq_1, rate)
+        integer_delay = self._estimate_delay_gaussian(iq_0, iq_1, rate)
         total_delay = integer_delay
 
         if self.mode in ['TEST']:
@@ -624,10 +624,10 @@ class Correlator(object):
         xbest = cp.abs(xcorr[imax])
         xnext = cp.abs(xcorr[imax + 1])
         delta_subpixel = 0.5 * (np.log(xprev) - np.log(xnext)) / (np.log(xprev) - 2. * np.log(xbest) + np.log(xnext))
-        integer_lag = n - (imax + delta_subpixel)
-        integer_delay = integer_lag / rate
+        subpixel_lag = n - (imax + delta_subpixel)
+        subpixel_delay = subpixel_lag / rate
 
-        return integer_delay
+        return subpixel_delay
 
 
     async def _streaming(self, sdr, buf, num_samp, start_time, run_time):
